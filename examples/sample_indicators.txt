@@ -1,0 +1,16 @@
+# DroidSleuth Sample C2 / IOC Indicator Feed
+# Format: Line-by-line IP addresses, domains, and suspicious endpoints
+# Used for testing indicator cross-referencing and correlation
+
+# Suspect C2 Infrastructure
+185.220.101.5
+194.26.29.112
+45.154.255.89
+
+# Suspect C2 Domains & Phishing Endpoints
+api-verify-security.top
+c2-mobile-sync.xyz
+update-carrier-services.com
+http://185.220.101.5:8080/gate.php
+https://api-verify-security.top/api/v1/collect
+http://c2-mobile-sync.xyz/download/payload.bin

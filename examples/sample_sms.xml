@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<!-- SMS Backup & Restore XML Export Format for Testing DroidSleuth -->
+<smses count="3">
+  <sms protocol="0" address="+18005550199" date="1760918400000" type="1" subject="null" body="SECURITY ALERT: Your Chase account is locked due to suspicious login. Verify immediately at: https://bit.ly/chase-auth-99" status="-1" read="1" />
+  <sms protocol="0" address="22000" date="1760918700000" type="1" subject="null" body="Your Google verification code is 849201. Do not share this code with anyone." status="-1" read="1" />
+  <sms protocol="0" address="+15550192834" date="1760919000000" type="2" subject="null" body="I installed the carrier update file you texted me." status="-1" read="1" />
+</smses>
