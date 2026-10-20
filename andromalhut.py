@@ -167,9 +167,12 @@ def print_banner() -> None:
     case_path = str(active) if active else "Select or Create via Option [6]"
 
     # ML Classifier status
-    model_path = Path.home() / "Android-Forensics/Datasets/Drebin/model/drebin_rf.joblib"
+    repo_model_dir = Path(__file__).resolve().parent / "ml_model"
+    legacy_model_dir = Path.home() / "Android-Forensics/Datasets/Drebin/model"
+    model_dir = repo_model_dir if (repo_model_dir / "drebin_rf.joblib").exists() else legacy_model_dir
+    model_path = model_dir / "drebin_rf.joblib"
     if model_path.exists():
-        ml_status = f"{C_GREEN}ONLINE{C_RESET} {C_GRAY}(Drebin+AndroZoo RF • 25,722 samples){C_RESET}"
+        ml_status = f"{C_GREEN}ONLINE{C_RESET} {C_GRAY}(GPU XGBoost • 25,722 samples){C_RESET}"
     else:
         ml_status = f"{C_YELLOW}STANDBY{C_RESET} {C_GRAY}(Fallback Heuristics){C_RESET}"
 
@@ -226,7 +229,10 @@ def print_banner() -> None:
 
 def check_tool_dependencies() -> Dict[str, Dict[str, Any]]:
     """Inspect all system binaries, Python libraries, and forensic models."""
-    ml_model_file = Path.home() / "Android-Forensics/Datasets/Drebin/model/drebin_rf.joblib"
+    repo_model_dir = Path(__file__).resolve().parent / "ml_model"
+    legacy_model_dir = Path.home() / "Android-Forensics/Datasets/Drebin/model"
+    model_dir = repo_model_dir if (repo_model_dir / "drebin_rf.joblib").exists() else legacy_model_dir
+    ml_model_file = model_dir / "drebin_rf.joblib"
     deps = {
         "python3": {
             "required": True,
@@ -238,8 +244,8 @@ def check_tool_dependencies() -> Dict[str, Dict[str, Any]]:
             "required": False,
             "installed": ml_model_file.exists(),
             "path": str(ml_model_file) if ml_model_file.exists() else "Not Found",
-            "purpose": "Multi-source Random Forest model (25,722 samples)",
-            "install_cmd": "Trained under Datasets/Drebin/model",
+            "purpose": "GPU-accelerated XGBoost model (25,722 samples)",
+            "install_cmd": "Pre-trained in ml_model/ or trained via ml_model/train.py",
         },
         "adb": {
             "required": False,
@@ -397,10 +403,12 @@ def init_case_interactive() -> Path:
 
 
 def run_ml_classifier(apk_path: Path, case_dir: Path) -> Dict[str, Any]:
-    """Execute the multi-source Drebin + AndroZoo Random Forest classifier on suspect APK."""
-    model_dir = Path.home() / "Android-Forensics/Datasets/Drebin/model"
+    """Execute the multi-source GPU-accelerated XGBoost classifier on suspect APK."""
+    repo_model_dir = Path(__file__).resolve().parent / "ml_model"
+    legacy_model_dir = Path.home() / "Android-Forensics/Datasets/Drebin/model"
+    model_dir = repo_model_dir if (repo_model_dir / "scan_apk.py").exists() else legacy_model_dir
     scanner_script = model_dir / "scan_apk.py"
-    venv_python = model_dir / "venv" / "bin" / "python"
+    venv_python = legacy_model_dir / "venv" / "bin" / "python"
     python_cmd = str(venv_python) if venv_python.exists() else sys.executable
 
     ml_out_dir = case_dir / "analysis" / "ml_classification"

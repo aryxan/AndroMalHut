@@ -4,10 +4,13 @@ import unittest
 from pathlib import Path
 import subprocess
 
+import sys
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MODEL_DIR = Path.home() / "Android-Forensics/Datasets/Drebin/model"
+LOCAL_MODEL_DIR = PROJECT_ROOT / "ml_model"
+LEGACY_MODEL_DIR = Path.home() / "Android-Forensics/Datasets/Drebin/model"
+MODEL_DIR = LOCAL_MODEL_DIR if (LOCAL_MODEL_DIR / "drebin_rf.joblib").exists() else LEGACY_MODEL_DIR
 SCANNER = MODEL_DIR / "scan_apk.py"
-PYTHON_VENV = MODEL_DIR / "venv/bin/python"
+PYTHON_VENV = (LEGACY_MODEL_DIR / "venv/bin/python") if (LEGACY_MODEL_DIR / "venv/bin/python").exists() else Path(sys.executable)
 
 class TestModelScanner(unittest.TestCase):
     def test_model_files_exist(self):
