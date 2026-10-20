@@ -11,31 +11,31 @@ DANGEROUS_PERMISSIONS: Dict[str, Dict[str, str]] = {
     # SMS / 2FA Interception
     "android.permission.RECEIVE_SMS": {
         "group": "SMS",
-        "risk": "CRITICAL",
-        "description": "Intercept incoming SMS messages (commonly abused for OTP/2FA theft).",
+        "risk": "HIGH",
+        "description": "Intercept incoming SMS messages (used for OTP verification or abused for OTP theft).",
         "capability": "SMS_INTERCEPTION",
     },
     "android.permission.READ_SMS": {
         "group": "SMS",
-        "risk": "HIGH",
-        "description": "Read stored SMS messages and banking notifications.",
+        "risk": "MEDIUM",
+        "description": "Read stored SMS messages and verification notifications.",
         "capability": "SMS_EXFILTRATION",
     },
     "android.permission.SEND_SMS": {
         "group": "SMS",
         "risk": "HIGH",
-        "description": "Send SMS messages silently without user interaction (toll fraud / spreading).",
+        "description": "Send SMS messages (toll fraud or SMS verification).",
         "capability": "SMS_TOLL_FRAUD",
     },
     "android.permission.RECEIVE_MMS": {
         "group": "SMS",
-        "risk": "HIGH",
+        "risk": "MEDIUM",
         "description": "Monitor and intercept incoming multimedia messages.",
         "capability": "SMS_INTERCEPTION",
     },
     "android.permission.RECEIVE_WAP_PUSH": {
         "group": "SMS",
-        "risk": "HIGH",
+        "risk": "MEDIUM",
         "description": "Monitor WAP push messages.",
         "capability": "SMS_INTERCEPTION",
     },
@@ -131,33 +131,33 @@ DANGEROUS_PERMISSIONS: Dict[str, Dict[str, str]] = {
     # Contacts & Audio/Camera Surveillance
     "android.permission.READ_CONTACTS": {
         "group": "CONTACTS",
-        "risk": "HIGH",
-        "description": "Access the user's entire address book and contact list.",
+        "risk": "MEDIUM",
+        "description": "Access the user's address book and contact list.",
         "capability": "DATA_EXFILTRATION",
     },
     "android.permission.RECORD_AUDIO": {
         "group": "MICROPHONE",
-        "risk": "HIGH",
-        "description": "Record microphone audio without explicit UI indicator in background.",
+        "risk": "MEDIUM",
+        "description": "Capture microphone audio (standard in voice messaging and VoIP).",
         "capability": "AUDIO_SURVEILLANCE",
     },
     "android.permission.CAMERA": {
         "group": "CAMERA",
-        "risk": "HIGH",
-        "description": "Capture photos and videos without displaying a camera preview.",
+        "risk": "MEDIUM",
+        "description": "Capture photos and videos (standard in photo/video/social apps).",
         "capability": "VIDEO_SURVEILLANCE",
     },
 
     # Location
     "android.permission.ACCESS_FINE_LOCATION": {
         "group": "LOCATION",
-        "risk": "HIGH",
+        "risk": "MEDIUM",
         "description": "Obtain precise GPS coordinates.",
         "capability": "LOCATION_TRACKING",
     },
     "android.permission.ACCESS_COARSE_LOCATION": {
         "group": "LOCATION",
-        "risk": "MEDIUM",
+        "risk": "LOW",
         "description": "Obtain approximate cell/Wi-Fi location.",
         "capability": "LOCATION_TRACKING",
     },
@@ -171,14 +171,14 @@ DANGEROUS_PERMISSIONS: Dict[str, Dict[str, str]] = {
     # Storage
     "android.permission.READ_EXTERNAL_STORAGE": {
         "group": "STORAGE",
-        "risk": "MEDIUM",
+        "risk": "LOW",
         "description": "Read files stored on shared storage (photos, documents, downloads).",
         "capability": "FILE_EXFILTRATION",
     },
     "android.permission.WRITE_EXTERNAL_STORAGE": {
         "group": "STORAGE",
-        "risk": "MEDIUM",
-        "description": "Write or tamper with files on shared storage.",
+        "risk": "LOW",
+        "description": "Write or modify files on shared storage.",
         "capability": "FILE_TAMPERING",
     },
     "android.permission.MANAGE_EXTERNAL_STORAGE": {
@@ -191,26 +191,26 @@ DANGEROUS_PERMISSIONS: Dict[str, Dict[str, str]] = {
     # Boot & Persistence
     "android.permission.RECEIVE_BOOT_COMPLETED": {
         "group": "PERSISTENCE",
-        "risk": "MEDIUM",
+        "risk": "LOW",
         "description": "Auto-start background services immediately upon phone reboot.",
         "capability": "AUTOSTART_PERSISTENCE",
     },
     "android.permission.FOREGROUND_SERVICE": {
         "group": "PERSISTENCE",
-        "risk": "LOW",
+        "risk": "INFORMATIONAL",
         "description": "Run background services with persistent notification.",
         "capability": "BACKGROUND_EXECUTION",
     },
     "android.permission.WAKE_LOCK": {
         "group": "SYSTEM",
-        "risk": "LOW",
+        "risk": "INFORMATIONAL",
         "description": "Keep processor awake to prevent phone sleep.",
         "capability": "KEEP_AWAKE",
     },
     "android.permission.INTERNET": {
         "group": "NETWORK",
-        "risk": "LOW",
-        "description": "Open network sockets and transmit data.",
+        "risk": "INFORMATIONAL",
+        "description": "Open standard network sockets and transmit data.",
         "capability": "NETWORK_COMMUNICATION",
     },
 }
@@ -226,8 +226,8 @@ COMBINATION_RULES = [
         "severity": "CRITICAL",
         "description": (
             "Requests both Overlay (SYSTEM_ALERT_WINDOW) and Accessibility Service permissions. "
-            "This combination is overwhelmingly associated with Android banking trojans (e.g. Cerberus, Anatsa, Alien) "
-            "to draw fake login dialogs over banking/crypto apps and intercept user credentials and keystrokes."
+            "Overwhelmingly associated with Android banking trojans (e.g. Cerberus, Anatsa) "
+            "to draw fake login dialogs over financial apps and intercept user credentials."
         ),
         "mitre_id": "T1411 (Exploit Abuse: Input Capture / Overlay)",
     },
@@ -238,7 +238,7 @@ COMBINATION_RULES = [
             "android.permission.RECEIVE_BOOT_COMPLETED",
             "android.permission.INTERNET",
         },
-        "severity": "HIGH",
+        "severity": "CRITICAL",
         "description": (
             "Requests SMS interception alongside boot persistence and Internet communication. "
             "Enables stealthy exfiltration of SMS 2FA codes and bank verification messages right after reboot."
@@ -246,17 +246,18 @@ COMBINATION_RULES = [
         "mitre_id": "T1412 (Capture SMS Messages)",
     },
     {
-        "name": "Full Spyware / Stalkerware Surveillance Pattern",
+        "name": "Stealth Background Spyware Surveillance Pattern",
         "required_permissions": {
             "android.permission.RECORD_AUDIO",
             "android.permission.CAMERA",
             "android.permission.ACCESS_FINE_LOCATION",
+            "android.permission.ACCESS_BACKGROUND_LOCATION",
             "android.permission.READ_CONTACTS",
         },
         "severity": "CRITICAL",
         "description": (
-            "Possesses broad surveillance capabilities across ambient microphone recording, "
-            "camera capture, precise GPS tracking, and address book harvesting."
+            "Possesses broad covert background surveillance capabilities across ambient microphone recording, "
+            "camera capture, persistent background GPS tracking, and address book harvesting."
         ),
         "mitre_id": "T1430 (Location Tracking) / T1429 (Audio Capture)",
     },
@@ -275,15 +276,16 @@ COMBINATION_RULES = [
         "mitre_id": "T1453 (Device Lockout)",
     },
     {
-        "name": "Malicious Dropper Pattern",
+        "name": "Arbitrary Package Installer / Secondary Payload Capability",
         "required_permissions": {
             "android.permission.REQUEST_INSTALL_PACKAGES",
             "android.permission.INTERNET",
         },
-        "severity": "HIGH",
+        "severity": "MEDIUM",
         "description": (
             "Capable of downloading arbitrary APK binaries from the Internet and prompting the user "
-            "or attempting to install them as secondary payloads."
+            "or attempting to install them as secondary payloads (legitimate for web browsers/app stores; "
+            "suspicious in games or single-purpose utility apps)."
         ),
         "mitre_id": "T1475 (Deliver Malicious App)",
     },
@@ -309,7 +311,7 @@ def normalize_permission_name(perm: str) -> str:
 
 
 def analyze_permissions(declared_permissions: List[str], granted_permissions: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Perform comprehensive threat analysis of declared and granted permissions."""
+    """Perform calibrated threat analysis of declared and granted permissions."""
     declared_set = {normalize_permission_name(p) for p in declared_permissions if p}
     granted_set = {normalize_permission_name(p) for p in (granted_permissions or []) if p}
 
@@ -350,13 +352,15 @@ def analyze_permissions(declared_permissions: List[str], granted_permissions: Op
                 risk_score += 25
             elif risk == "HIGH":
                 categorized["high"].append(entry)
-                risk_score += 15
+                risk_score += 12
             elif risk == "MEDIUM":
                 categorized["medium"].append(entry)
-                risk_score += 5
+                risk_score += 4
             elif risk == "LOW":
                 categorized["low"].append(entry)
                 risk_score += 1
+            else:
+                categorized["normal"].append(entry)
         elif norm_perm.startswith("android.permission."):
             categorized["normal"].append({
                 "permission": norm_perm,
@@ -388,15 +392,18 @@ def analyze_permissions(declared_permissions: List[str], granted_permissions: Op
             if rule["severity"] == "CRITICAL":
                 risk_score += 30
             elif rule["severity"] == "HIGH":
-                risk_score += 20
+                risk_score += 15
+            elif rule["severity"] == "MEDIUM":
+                risk_score += 8
 
     risk_score = min(risk_score, max_possible_score)
 
-    if risk_score >= 70:
+    # Calibrated industry severity bands
+    if risk_score >= 75:
         overall_severity = "CRITICAL"
-    elif risk_score >= 40:
+    elif risk_score >= 50:
         overall_severity = "HIGH"
-    elif risk_score >= 20:
+    elif risk_score >= 25:
         overall_severity = "MEDIUM"
     else:
         overall_severity = "LOW"

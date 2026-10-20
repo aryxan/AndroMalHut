@@ -871,9 +871,11 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
         behavioral_hypotheses.append(
             "Potential for unauthorized interception, redirection, or exfiltration of 2FA SMS tokens."
         )
-    if observed_patterns.get("dynamic_code_loading") and extracted_indicators.get("urls"):
+    has_dropper_perms = any(p in manifest.get("permissions", []) for p in ["android.permission.REQUEST_INSTALL_PACKAGES", "android.permission.INSTALL_PACKAGES"])
+    has_payload_urls = any(any(ext in u.get("indicator", "").lower() for ext in [".apk", ".dex", ".jar", ".bin"]) for u in extracted_indicators.get("urls", []))
+    if observed_patterns.get("dynamic_code_loading") and (has_dropper_perms or has_payload_urls):
         behavioral_hypotheses.append(
-            "Capability to act as a multi-stage dropper, downloading and loading encrypted secondary payload DEX modules from C2."
+            "Capability to act as a secondary payload dropper or dynamically execute external binary modules."
         )
 
     # Optional Decompilation with JADX / APKTool if output directory is provided and tools exist

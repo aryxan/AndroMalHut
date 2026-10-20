@@ -68,6 +68,10 @@ from modules.ollama_analysis import (
     check_ollama_status,
     run_case_ollama_explanation,
 )
+from modules.online_verifier import (
+    resolve_friendly_app_name,
+    verify_package_online,
+)
 
 import threading
 import time
@@ -467,19 +471,70 @@ def run_ml_classifier(apk_path: Path, case_dir: Path) -> Dict[str, Any]:
 # Interactive Terminal Menu
 # ============================================================================
 
+def setup_case_workflow() -> Path:
+    """Prompt user on startup to either start a new case or resume an existing case from a list."""
+    clear_screen()
+    base_dir = get_default_base_dir()
+    existing_cases = list_cases(base_dir)
+    active = get_active_case()
+
+    print(f"\n{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
+    print(f"{C_CYAN}{C_BOLD}|                  CASE & INVESTIGATION SETUP                     |{C_RESET}")
+    print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
+    if active and active.exists():
+        print(f"  Current Active Case : {C_GREEN}{active.name}{C_RESET} ({active})")
+    else:
+        print(f"  Current Active Case : {C_YELLOW}None (No Active Investigation){C_RESET}")
+
+    print(f"\n{C_BOLD}Select Case Option:{C_RESET}")
+    print(f"  {C_CYAN}[1]{C_RESET} {C_BOLD}Start a New Case / Scan{C_RESET} (Create dedicated test subfolders)")
+    print(f"  {C_CYAN}[2]{C_RESET} {C_BOLD}Resume an Existing Case / Scan{C_RESET} (Select from list of cases)")
+    if active and active.exists():
+        print(f"  {C_CYAN}[3]{C_RESET} {C_BOLD}Continue with Current Active Case ({active.name}){C_RESET}")
+
+    try:
+        opt = input(f"\n{C_BOLD}Enter choice [1-3] (Default: 1):{C_RESET} ").strip()
+    except (KeyboardInterrupt, EOFError):
+        opt = "1"
+
+    if opt in ("2", "resume"):
+        if not existing_cases:
+            print(f"\n{C_YELLOW}[!] No existing cases found in {base_dir}. Initializing new scan...{C_RESET}")
+            return prompt_scan_name(open_folder=True)
+        print(f"\n{C_BOLD}Existing Forensic Cases & Scans:{C_RESET}")
+        for idx, c in enumerate(existing_cases, 1):
+            is_active = active and (c["path"] == str(active))
+            badge = f"{C_GREEN}[ACTIVE]{C_RESET}" if is_active else "        "
+            print(f"  [{idx:2}] {badge} {C_CYAN}{c['case_id']:<22}{C_RESET} {c['created_at_utc'][:10]} | {c['description'][:35] or 'Android Forensic Scan'}")
+        sel = input(f"\n{C_BOLD}Enter case number to activate and open (0 for new scan):{C_RESET} ").strip()
+        if sel.isdigit() and 1 <= int(sel) <= len(existing_cases):
+            selected = Path(existing_cases[int(sel) - 1]["path"])
+            set_active_case(selected)
+            print(f"{C_GREEN}[+] Activated case: {selected.name}{C_RESET}")
+            print(f"{C_CYAN}[➜] Opening scan folder in system file manager...{C_RESET}")
+            open_system_folder(selected)
+            return selected
+        elif sel == "0":
+            return prompt_scan_name(open_folder=True)
+        else:
+            return prompt_scan_name(open_folder=True)
+    elif opt == "3" and active and active.exists():
+        return active
+    else:
+        return prompt_scan_name(open_folder=True)
+
+
 def run_interactive_menu() -> None:
     """Run the main interactive forensic menu with unified workflows and subfolders."""
-    # On initial launch, if no active case is set, prompt for scan name immediately
-    if not get_active_case():
-        clear_screen()
-        prompt_scan_name(open_folder=True)
+    # Always prompt the investigator on startup to start a new case or resume from existing cases
+    setup_case_workflow()
 
     while True:
         clear_screen()
         print_banner()
         active = get_active_case()
         if not active or not active.exists():
-            active = prompt_scan_name(open_folder=True)
+            active = setup_case_workflow()
 
         print(f"\n{C_BOLD}Forensic Investigation Workflows:{C_RESET}")
         menu_items = [
@@ -738,7 +793,8 @@ def run_interactive_menu() -> None:
                         "",
                     )
                     if pkg_name:
-                        packages.append((label or pkg_name, pkg_name))
+                        friendly = resolve_friendly_app_name(pkg_name, label)
+                        packages.append((friendly, pkg_name))
                     else:
                         for value in obj.values():
                             collect_apps(value)
@@ -764,7 +820,7 @@ def run_interactive_menu() -> None:
                 })
                 labels = {pkg: label for label, pkg in packages}
                 if device_packages:
-                    packages = [(labels.get(pkg, pkg), pkg) for pkg in device_packages]
+                    packages = [(resolve_friendly_app_name(pkg, labels.get(pkg)), pkg) for pkg in device_packages]
             except Exception:
                 packages = list({pkg: (label, pkg) for label, pkg in packages}.values())
 
@@ -776,7 +832,7 @@ def run_interactive_menu() -> None:
             else:
                 print(f"\n{C_BOLD}Installed User Applications — Select one to inspect:{C_RESET}")
                 for idx, (label, package_id) in enumerate(packages, 1):
-                    print(f"  {idx:3}. {label:<30} [{package_id}]")
+                    print(f"  {idx:3}. {label:<32} [{package_id}]")
                 selection = input(f"\n{C_BOLD}Enter app number or package name (0 to cancel):{C_RESET} ").strip()
                 if selection == "0" or not selection:
                     pkg = ""
@@ -789,19 +845,66 @@ def run_interactive_menu() -> None:
             if pkg:
                 res = inspect_package(pkg)
                 if res.get("status") == "SUCCESS":
-                    print(f"\n{C_GREEN}[+] Package Inspection: {pkg}{C_RESET}")
-                    print(f"    Classification: {'System App' if res['is_system_app'] else 'Third-Party / User App'}")
-                    print(f"    Currently Running: {'YES' if res['is_running'] else 'No'}")
-                    print(f"    APK Path(s): {', '.join(res['apk_paths'])}")
+                    friendly_name = resolve_friendly_app_name(pkg, res.get("app_name"))
                     meta = res.get("dumpsys_metadata", {})
-                    print(f"    Version: {meta.get('version_name')} (code {meta.get('version_code')})")
-                    print(f"    First Install: {meta.get('first_install_time')}")
-                    print(f"    Last Update:   {meta.get('last_update_time')}")
-                    print(f"    Requested Permissions ({len(meta.get('requested_permissions', []))}): {', '.join(meta.get('requested_permissions', [])[:5])}...")
-                    print(f"    Granted Runtime Perms ({len(meta.get('runtime_permissions', []))}): {', '.join(meta.get('runtime_permissions', []))}")
+                    apk_paths = res.get("apk_paths", [])
 
-                    pull_opt = input("\nPull this APK from device into case evidence? [y/N]: ").strip().lower()
-                    if pull_opt == "y":
+                    # Attempt fast on-device SHA256 calculation
+                    on_device_hash = ""
+                    if apk_paths and is_adb_installed():
+                        try:
+                            h_proc = subprocess.run(
+                                ["adb", "shell", "sha256sum", apk_paths[0]],
+                                capture_output=True, text=True, timeout=15
+                            )
+                            if h_proc.returncode == 0 and h_proc.stdout.strip():
+                                on_device_hash = h_proc.stdout.strip().split()[0].strip()
+                        except Exception:
+                            pass
+
+                    print(f"\n{C_GREEN}[+] Deep Application Inspection: {friendly_name} ({pkg}){C_RESET}")
+                    print(f"    Application Name : {C_BOLD}{friendly_name}{C_RESET}")
+                    print(f"    Package ID       : {pkg}")
+                    print(f"    Classification   : {'System App' if res['is_system_app'] else 'Third-Party / User App'}")
+                    print(f"    Currently Running: {'YES' if res['is_running'] else 'No'}")
+                    print(f"    APK Path(s)      : {', '.join(res['apk_paths'])}")
+                    print(f"    Download Source  : {C_CYAN}{meta.get('download_source', 'Unknown')}{C_RESET}")
+                    if on_device_hash:
+                        print(f"    SHA-256 (Device) : {C_GRAY}{on_device_hash}{C_RESET}")
+                    print(f"    Version          : {meta.get('version_name')} (code {meta.get('version_code')})")
+                    print(f"    First Install    : {meta.get('first_install_time')}")
+                    print(f"    Last Update      : {meta.get('last_update_time')}")
+                    print(f"    Requested Perms  : {len(meta.get('requested_permissions', []))} permissions")
+                    print(f"    Runtime Granted  : {len(meta.get('runtime_permissions', []))} permissions")
+
+                    print(f"\n{C_BOLD}Investigation Actions for this Application:{C_RESET}")
+                    print(f"  {C_CYAN}[1]{C_RESET} Verify App Name & Threat Reputation Online via Hash (SHA-256)")
+                    print(f"  {C_CYAN}[2]{C_RESET} Pull APK from device into case evidence & run ML Malware Scanner")
+                    print(f"  {C_CYAN}[0]{C_RESET} Return to Application List")
+
+                    act = input(f"\n{C_BOLD}Select action [0-2] (Default: 1):{C_RESET} ").strip()
+                    if act in ("", "1"):
+                        print(f"\n[*] Querying Google Play, CIRCL NSRL and threat registries for {pkg}...")
+                        with ForensicSpinner("Verifying application identity and hash reputation online..."):
+                            online_res = verify_package_online(pkg, on_device_hash)
+                        print(f"\n{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
+                        print(f"{C_CYAN}{C_BOLD}|             ONLINE HASH & APP REPUTATION VERIFICATION           |{C_RESET}")
+                        print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
+                        print(f"  Package Identifier : {C_BOLD}{online_res.get('package_name')}{C_RESET}")
+                        print(f"  Verified App Name  : {C_GREEN}{online_res.get('app_name')}{C_RESET}")
+                        print(f"  Download Source    : {online_res.get('verified_source')}")
+                        print(f"  Play Store Status  : {online_res.get('play_store_status')}")
+                        rep_color = C_GREEN if ("BENIGN" in online_res.get("threat_reputation", "") or "CLEAN" in online_res.get("threat_reputation", "")) else C_RED
+                        print(f"  Threat Reputation  : {rep_color}{online_res.get('threat_reputation')}{C_RESET}")
+                        if online_res.get("details"):
+                            for d in online_res["details"]:
+                                print(f"    • {d}")
+                        print(f"{C_CYAN}+-----------------------------------------------------------------+{C_RESET}")
+                        pull_after = input("\nPull this APK from device into case evidence now? [y/N]: ").strip().lower()
+                        if pull_after == "y":
+                            act = "2"
+
+                    if act == "2":
                         pull_res = pull_application_apk(pkg, case_dir)
                         if pull_res.get("status") == "SUCCESS":
                             preserved_apk = Path(pull_res["preserved_evidence_path"])

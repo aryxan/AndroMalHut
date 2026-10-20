@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
 from modules.case_manager import log_case_action
+from modules.online_verifier import resolve_friendly_app_name
 
 try:
     from reportlab.lib.pagesizes import letter
@@ -192,6 +193,46 @@ def load_case_data(case_dir: Path) -> Dict[str, Any]:
                 data["ai_explanations"].append(f.read_text(encoding="utf-8"))
             except Exception:
                 pass
+
+    # Auto-acquire from connected device if missing to avoid blank reports
+    try:
+        from modules.device_inventory import is_adb_installed, list_connected_devices, collect_device_info, inventory_installed_applications
+        from modules.apk_analysis import analyze_apk
+        from modules.online_verifier import resolve_friendly_app_name
+
+        if (not data["device_info"] or not data["inventory"]) and is_adb_installed():
+            connected = list_connected_devices()
+            if connected and any(d.get("state") == "device" for d in connected):
+                if not data["device_info"]:
+                    dinfo = collect_device_info()
+                    if dinfo.get("status") == "SUCCESS":
+                        data["device_info"] = dinfo
+                        inv_dir = case_dir / "evidence" / "device_inventory"
+                        inv_dir.mkdir(parents=True, exist_ok=True)
+                        (inv_dir / "device_info.json").write_text(json.dumps(dinfo, indent=2), encoding="utf-8")
+                if not data["inventory"]:
+                    inv_res = inventory_installed_applications()
+                    if inv_res.get("status") == "SUCCESS":
+                        data["inventory"] = inv_res
+                        inv_dir = case_dir / "evidence" / "device_inventory"
+                        inv_dir.mkdir(parents=True, exist_ok=True)
+                        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        (inv_dir / f"installed_apps_{stamp}.json").write_text(json.dumps(inv_res, indent=2), encoding="utf-8")
+
+        # Auto-analyze preserved original APKs if not yet in apk_analysis
+        orig_apks_dir = case_dir / "evidence" / "original_apks"
+        if orig_apks_dir.exists() and not data["apk_analysis"]:
+            for apk_file in sorted(orig_apks_dir.glob("*.apk")):
+                try:
+                    out_apk_dir = case_dir / "analysis" / "apk_analysis"
+                    out_apk_dir.mkdir(parents=True, exist_ok=True)
+                    apk_res = analyze_apk(apk_file, output_analysis_dir=out_apk_dir)
+                    data["apk_analysis"].append(apk_res)
+                    (out_apk_dir / f"apk_analysis_{apk_file.stem}.json").write_text(json.dumps(apk_res, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
     return data
 
@@ -684,18 +725,22 @@ def generate_pdf_report(case_dir: Path, operator: Optional[str] = None) -> Tuple
     story.append(Paragraph("5. Installed Applications Summary", h1_style))
     if data["inventory"] and data["inventory"].get("applications"):
         user_apps = [a for a in data["inventory"]["applications"] if a.get("type") == "User/Third-Party"]
-        story.append(Paragraph(f"<b>Third-Party Installed Applications ({len(user_apps)} total):</b>", body_style))
-        app_table_data = [["Package Name", "Running"]]
-        for a in user_apps[:15]:
+        story.append(Paragraph(f"<b>Third-Party Installed Applications ({len(user_apps)} total detected):</b>", body_style))
+        app_table_data = [["Application Name", "Package Identifier", "State"]]
+        for a in user_apps[:25]:
+            p_name = a.get("package_name", "")
+            f_name = resolve_friendly_app_name(p_name)
             app_table_data.append([
-                Paragraph(a.get("package_name", ""), body_style),
-                "YES" if a.get("is_running") else "No",
+                Paragraph(f"<b>{f_name[:24]}</b>", body_style),
+                Paragraph(f"<font size=7>{p_name}</font>", body_style),
+                "RUNNING" if a.get("is_running") else "Idle",
             ])
-        at = Table(app_table_data, colWidths=[400, 104])
+        at = Table(app_table_data, colWidths=[150, 280, 74])
         at.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#37474F")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 8),
             ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D0D0D0")),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#F8F9FA"), colors.white]),
         ]))
