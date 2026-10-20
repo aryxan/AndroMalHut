@@ -604,7 +604,7 @@ def run_interactive_menu() -> None:
             ("1", "Static APK Forensics & ML", "Decompile, inspect manifest, permissions & ML triage"),
             ("2", "Connected Phone Scanner", "Device hardware details, full app inventory & APK pull"),
             ("3", "Deep Application Inspector", "Component analysis, risk scoring & signature audit"),
-            ("4", "Forensics & Telemetry", "Logcat extraction, SMS forensics, PCAP network dissection"),
+            ("4", "Forensics & Telemetry", "Logcat extraction, PCAP network dissection & C2 IOCs"),
             ("5", "Generate Forensic Reports", "Generate Dossier in PDF (with browser preview) & Markdown"),
             ("6", "Manage Scans & Evidence", "Switch scan, create scan folder or open in file manager"),
             ("7", "Verify Evidence Integrity", "Cryptographic Hash Manifest Verification (SHA-256)"),

@@ -39,13 +39,13 @@
 ## Key Features
 
 1. **Dual-Layer Malware Classification Engine:**
-   - **Machine Learning (GPU-Accelerated XGBoost Engine):** Trained across 25,722 applications (Drebin-215 + AndroZoo) with NVIDIA CUDA GPU acceleration (`hist` tree method) and automatic CPU fallback. Features calibrated interaction patterns (`RISK_COVERT_SPYWARE`, `RISK_OVERLAY_ACCESS`, `RISK_SMS_BOOT`, `RISK_DEVICE_TAKEOVER`) preventing false positives on legitimate banking/enterprise apps while retaining high sensitivity to RATs and Trojans.
+   - **Machine Learning (GPU-Accelerated XGBoost Engine):** Trained across 25,722 applications (Drebin-215 + AndroZoo) with NVIDIA CUDA GPU acceleration (`hist` tree method) and automatic CPU fallback. Features calibrated interaction patterns (covert surveillance, banking overlay hijacking, autostart persistence, and device takeover privileges) preventing false positives on legitimate banking/enterprise apps while retaining high sensitivity to RATs and Trojans.
    - **Deep Static Dissection:** Pure-Python Binary XML (AXML) parser, DEX string extractor, component auditor, and cryptographic certificate verifier.
    - **Local AI Triage Narrative:** Optional offline integration with **Ollama** (`qwen`, `llama`) to synthesize structured, readable executive triage reports.
 
 2. **Automated Case & Subfolder Organization:**
    - Prompts for a scan name upon launch. If the scan already exists, it immediately activates it and opens the folder in the native desktop file manager (`xdg-open`).
-   - Generates dedicated, isolated subfolders for each distinct test type (`analysis/ml_classification`, `analysis/apk_analysis`, `analysis/ai_triage`, `analysis/network_analysis`, `analysis/log_analysis`, `analysis/sms_analysis`, `analysis/timelines`, `evidence/`, `hashes/`, `reports/`).
+   - Generates dedicated, isolated subfolders for each distinct test type (`analysis/ml_classification`, `analysis/apk_analysis`, `analysis/ai_triage`, `analysis/network_analysis`, `analysis/log_analysis`, `evidence/`, `hashes/`, `reports/`, `logs/`).
 
 3. **Authorized Device Acquisition (ADB):**
    - Collects hardware identifiers, installed third-party apps, running processes, and granted runtime permissions without rooting or modifying target devices.
@@ -54,7 +54,6 @@
 4. **Forensics, Telemetry & Network IOC Extraction:**
    - Extracts hardcoded URLs, IPv4 addresses, and domain indicators from APK assets and DEX bytecode.
    - Parses PCAP/PCAPNG network packet captures via `tshark` to correlate C2 infrastructure.
-   - Ingests and analyzes SMS databases/backups for credential theft and 2FA interception patterns.
 
 5. **Evidence Integrity & Chain of Custody:**
    - Cryptographic hashing (SHA-256, SHA-1, MD5) on evidence ingestion.
@@ -70,28 +69,25 @@ When a scan is created or selected, AndroMalHut structures all evidence and anal
 ```text
 <Scan_Directory>/
 ├── case.json                         # Investigation metadata, investigator, timestamp, device identifier
-├── evidence/                         # Read-only preserved evidence
-│   ├── original_apks/                # Imported suspicious APKs
-│   ├── device_apks/                  # APKs extracted from connected device
+├── evidence/                         # Preserved evidence
+│   ├── original_apks/                # Preserved suspect APK files
+│   ├── device_apks/                  # APKs pulled from connected Android device
 │   ├── device_inventory/             # Installed application lists (JSON & CSV) & device info
-│   ├── device_logs/                  # Raw logcat and dmesg exports
-│   ├── sms_exports/                  # Raw SMS database dumps or XML/JSON backups
-│   ├── network_captures/             # PCAP / PCAPNG network packet captures
+│   ├── device_logs/                  # Raw logcat and system log exports
+│   ├── network_captures/             # Preserved network packet captures (PCAP / PCAPNG)
 │   └── imported_files/               # Miscellaneous evidence files
-├── analysis/                         # Dedicated test outputs
+├── analysis/                         # Automated forensic analysis outputs
 │   ├── ml_classification/            # GPU XGBoost ML predictions, confidence scores & feature matrices
 │   ├── apk_analysis/                 # Static disassembly (manifest, exported components, permissions)
 │   ├── ai_triage/                    # Local Ollama / Qwen forensic briefing narratives
 │   ├── network_analysis/             # Dissected C2 indicators (URLs, IPv4, Domains)
-│   ├── log_analysis/                 # Parsed logcat events and crash signatures
-│   ├── sms_analysis/                 # Flagged 2FA, OTP, and phishing SMS messages
-│   └── timelines/                    # Correlated chronological incident timeline (JSON & CSV)
+│   └── log_analysis/                 # Parsed logcat events and crash signatures
 ├── hashes/                           # Cryptographic integrity records
 │   ├── evidence_hashes.json          # Manifest containing SHA-256, SHA-1, MD5, and file sizes
 │   └── manifest.sha256               # Standard sha256sum verification manifest
 ├── reports/                          # Final investigation dossiers
-│   ├── <Package>_<Timestamp>.pdf     # Cryptographic executive PDF report
-│   └── forensic_report_<Case>.md     # Complete 16-section technical report
+│   ├── CASE_REPORT_<Case>.pdf        # Executive cryptographic PDF report
+│   └── CASE_REPORT_<Case>.md         # Complete 16-section technical Markdown report
 └── logs/                             # Audit logging
     └── case_audit.log                # Immutable timestamped chronological action ledger
 ```
@@ -100,7 +96,7 @@ When a scan is created or selected, AndroMalHut structures all evidence and anal
 
 ## Machine Learning Benchmark & Confidence Scores
 
-AndroMalHut integrates a high-performance **GPU-Accelerated XGBoost Classifier** trained on **25,722 real-world Android applications** (13,246 Malware, 12,476 Benign). To eliminate historical bias from 2011-era datasets (where benign apps lacked modern multi-permission capabilities like Camera + Location used by QR and UPI banking), deceptive legacy IPC features were excised and replaced with calibrated multi-permission interaction patterns (`RISK_SMS_BOOT`, `RISK_OVERLAY_ACCESS`, `RISK_COVERT_SPYWARE`, `RISK_DEVICE_TAKEOVER`).
+AndroMalHut integrates a high-performance **GPU-Accelerated XGBoost Classifier** trained on **25,722 real-world Android applications** (13,246 Malware, 12,476 Benign). To eliminate historical bias from 2011-era datasets (where benign apps lacked modern multi-permission capabilities like Camera + Location used by QR and UPI banking), deceptive legacy IPC features were excised and replaced with calibrated multi-permission interaction patterns (covert surveillance, banking overlay hijacking, autostart persistence, and device takeover privileges).
 
 The model was rigorously evaluated on both a large-scale holdout test set and an independent target dataset (`android_malware_dataset.csv`). **All reported metrics are verified, genuine, and reproducible.**
 
@@ -160,7 +156,7 @@ To make the most effective use of **AndroMalHut**, users should have a working f
 1. **Android Application Anatomy:** Understanding the role of `AndroidManifest.xml`, declared permissions (`uses-permission`), exported application components (`activities`, `services`, `receivers`, `providers`), and DEX bytecode.
 2. **Android Permission Models:** Distinguishing between normal, dangerous (runtime-prompted), signature-level, and privileged system permissions (e.g. `SYSTEM_ALERT_WINDOW`, `BIND_ACCESSIBILITY_SERVICE`).
 3. **Android Debug Bridge (ADB) Fundamentals:** Connecting devices over USB, enabling Developer Options, accepting RSA fingerprint authorization, and running read-only `pm list packages` and `dumpsys` commands.
-4. **Network & Mobile Threat Vectors:** Recognizing common mobile attack vectors such as overlay attacks (accessibility hijacking), SMS-stealing trojans, command-and-control (C2) beaconing, and dynamic code loading (`DexClassLoader`).
+4. **Network & Mobile Threat Vectors:** Recognizing common mobile attack vectors such as overlay attacks (accessibility hijacking), banking trojans, remote access trojans (RATs), command-and-control (C2) beaconing, and dynamic code loading (`DexClassLoader`).
 
 ---
 
@@ -236,10 +232,10 @@ python3 andromalhut.py
 Upon launch:
 1. **Prompt for Scan Name:** Enter a case or app name (e.g. `Suspect_BankingApp`). If the scan already exists, its folder opens automatically on your desktop!
 2. **Choose a Workflow [0-8]:**
-   - **`[1] Static APK Forensics & ML:`** Runs the multi-source Random Forest ML model, performs static AXML/DEX analysis, extracts C2 endpoints, generates an AI triage briefing, and compiles executive PDF/Markdown reports.
+   - **`[1] Static APK Forensics & ML:`** Runs the GPU-accelerated XGBoost ML model, performs static AXML/DEX analysis, extracts C2 endpoints, generates an AI triage briefing, and compiles executive PDF/Markdown reports.
    - **`[2] Connected Phone Scanner:`** Lists USB-connected Android devices, collects build properties, and exports full user/system application inventories.
    - **`[3] Deep Application Inspector:`** Interactive numbered picker for installed user apps. Inspects runtime permissions, install timestamps, download provenance, and offers one-click APK extraction and scanning.
-   - **`[4] Forensics & Telemetry:`** Dumps device logcats, parses SMS backup files for 2FA exfiltration, and analyzes PCAP network captures.
+   - **`[4] Forensics & Telemetry:`** Dumps device logcats, analyzes PCAP network captures, and correlates C2 infrastructure indicators.
    - **`[5] Generate Forensic Reports:`** Produces comprehensive 16-section technical Markdown reports and ReportLab PDF dossiers with direct browser preview.
    - **`[6] Manage Scans & Evidence:`** Switch scans or open the active investigation folder directly in your desktop file manager.
    - **`[7] Verify Evidence Integrity:`** Recalculates SHA-256 hashes for all preserved artifacts to ensure chain of custody.
