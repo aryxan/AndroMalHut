@@ -44,6 +44,8 @@ Android-Forensics/
 .droidsleuth_active_case
 .andromalhut_active_case
 *.log
+reports/
+ml_model/reports/
 
 # Test temporary artifacts
 tests/tmp/

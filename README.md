@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Tested%20OS-Kali%20Linux%20%7C%20Debian%20%7C%20Ubuntu-red.svg)]()
 [![Model Accuracy](https://img.shields.io/badge/Holdout%20Accuracy-93.92%25-brightgreen.svg)]()
-[![Downloads Dataset Accuracy](https://img.shields.io/badge/Downloads%20Dataset-86.21%25-green.svg)]()
+[![Validation Accuracy](https://img.shields.io/badge/Validation%20Accuracy-86.21%25-green.svg)]()
 [![GPU Accelerated](https://img.shields.io/badge/GPU%20Engine-NVIDIA%20CUDA%20XGBoost-76B900?logo=nvidia)]()
 
 > **AndroMalHut** (developed by [**aryxan**](https://github.com/aryxan)) is a terminal-based digital forensics, APK reverse engineering, and mobile malware triage toolkit. Engineered for incident responders, digital forensics investigators, and security researchers, it delivers evidence-grade analysis of suspicious Android applications without executing untrusted binaries.
@@ -14,7 +14,7 @@
 ---
 
 > [!IMPORTANT]
-> ### ⚖️ Educational & Authorized Defensive Use Disclaimer
+> ### Educational & Authorized Defensive Use Disclaimer
 > **AndroMalHut is strictly developed for educational purposes, academic research, authorized penetration testing, and digital forensics incident response on systems and applications you own or have explicit, documented authorization to inspect.**
 > The author (**aryxan**) expressly prohibits the use of this software for malicious, unlawful, or unauthorized activities. The user assumes full legal responsibility for compliance with all applicable local, national, and international laws.
 
@@ -104,7 +104,7 @@ AndroMalHut integrates a high-performance **GPU-Accelerated XGBoost Classifier**
 
 The model was rigorously evaluated on both a large-scale holdout test set and an independent target dataset (`android_malware_dataset.csv`). **All reported metrics are verified, genuine, and reproducible.**
 
-### 1. Benchmark on Independent Dataset (`Downloads/android_malware_dataset.csv`)
+### 1. Benchmark on Independent Dataset (`android_malware_dataset.csv`)
 - **Sample Distribution:** 58 Real-World Samples (38 Malware, 20 Benign)
 - **Features Evaluated:** 126 Android permissions + engineered capability combinations
 
@@ -324,9 +324,11 @@ python3 andromalhut.py verify-hashes
 
 ## Testing & Verification
 
-Run the full automated test suite (19 unit tests covering scan management, subfolders, existing scan detection, ML model inference, and report compilation):
+Run the full automated test suite (29 unit tests covering scan management, subfolders, existing scan detection, GPU ML model inference, and report compilation):
 
 ```bash
+pytest
+# or via standard library:
 python3 -m unittest discover tests
 ```
 

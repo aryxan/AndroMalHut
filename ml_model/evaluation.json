@@ -1,7 +1,7 @@
 {
   "datasets": [
-    "/home/mrrobot/Android-Forensics/Datasets/AndroZoo/Permission_DATASET.csv",
-    "/home/mrrobot/Android-Forensics/Datasets/Drebin/drebin-215.csv"
+    "Datasets/AndroZoo/Permission_DATASET.csv",
+    "Datasets/Drebin/drebin-215.csv"
   ],
   "total_samples": 25722,
   "malware_samples": 13246,
