@@ -234,14 +234,14 @@ python3 andromalhut.py
 Upon launch:
 1. **Prompt for Scan Name:** Enter a case or app name (e.g. `Suspect_BankingApp`). If the scan already exists, its folder opens automatically on your desktop!
 2. **Choose a Workflow [0-8]:**
-   - **`[1] ⚡ Scan Suspicious APK:`** Runs the multi-source Random Forest ML model, performs static AXML/DEX analysis, extracts C2 endpoints, generates an AI triage briefing, and compiles executive PDF/Markdown reports.
-   - **`[2] 📱 Connected Phone Scanner:`** Lists USB-connected Android devices, collects build properties, and exports full user/system application inventories.
-   - **`[3] 🔍 Deep App Inspector:`** Interactive numbered picker for installed user apps. Inspects runtime permissions, install timestamps, and offers one-click APK extraction and scanning.
-   - **`[4] 🛡️ Forensics & Telemetry:`** Dumps device logcats, parses SMS backup files for 2FA exfiltration, and analyzes PCAP network captures.
-   - **`[5] 📑 Generate Forensic Reports:`** Produces comprehensive 16-section technical Markdown reports and ReportLab PDF dossiers.
-   - **`[6] 📁 Manage Scans & Folders:`** Switch scans or open the active investigation folder directly in your desktop file manager.
-   - **`[7] 🔒 Verify Evidence Integrity:`** Recalculates SHA-256 hashes for all preserved artifacts to ensure chain of custody.
-   - **`[8] ⚙️ System Diagnostics:`** Displays a real-time status matrix of system dependencies and models.
+   - **`[1] Static APK Forensics & ML:`** Runs the multi-source Random Forest ML model, performs static AXML/DEX analysis, extracts C2 endpoints, generates an AI triage briefing, and compiles executive PDF/Markdown reports.
+   - **`[2] Connected Phone Scanner:`** Lists USB-connected Android devices, collects build properties, and exports full user/system application inventories.
+   - **`[3] Deep Application Inspector:`** Interactive numbered picker for installed user apps. Inspects runtime permissions, install timestamps, download provenance, and offers one-click APK extraction and scanning.
+   - **`[4] Forensics & Telemetry:`** Dumps device logcats, parses SMS backup files for 2FA exfiltration, and analyzes PCAP network captures.
+   - **`[5] Generate Forensic Reports:`** Produces comprehensive 16-section technical Markdown reports and ReportLab PDF dossiers with direct browser preview.
+   - **`[6] Manage Scans & Evidence:`** Switch scans or open the active investigation folder directly in your desktop file manager.
+   - **`[7] Verify Evidence Integrity:`** Recalculates SHA-256 hashes for all preserved artifacts to ensure chain of custody.
+   - **`[8] System & Tool Diagnostics:`** Displays a real-time status matrix of system dependencies and models.
 
 ---
 

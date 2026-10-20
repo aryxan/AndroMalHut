@@ -255,8 +255,180 @@ def extract_raw_printable_strings(data: bytes, min_length: int = 4) -> List[str]
 # High-Level APK Analysis Functions
 # ============================================================================
 
+def parse_manifest_with_aapt(apk_path: Path) -> Optional[Dict[str, Any]]:
+    """Parse AndroidManifest.xml using system aapt for 100% fidelity on modern APKs."""
+    if not shutil.which("aapt"):
+        return None
+
+    try:
+        manifest_data = {
+            "package_name": "Unknown",
+            "version_code": "Unknown",
+            "version_name": "Unknown",
+            "min_sdk": "Unknown",
+            "target_sdk": "Unknown",
+            "application_label": "Unknown",
+            "permissions": [],
+            "activities": [],
+            "services": [],
+            "receivers": [],
+            "providers": [],
+            "exported_components": [],
+            "boot_receivers": [],
+            "accessibility_services": [],
+            "device_admin_receivers": [],
+            "vpn_services": [],
+        }
+
+        # Step 1: Run aapt dump badging
+        res_badging = subprocess.run(
+            ["aapt", "dump", "badging", str(apk_path)],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=30,
+        )
+        badging_out = res_badging.stdout or ""
+
+        pkg_m = re.search(r"package:\s+name='([^']+)'", badging_out)
+        if pkg_m:
+            manifest_data["package_name"] = pkg_m.group(1)
+
+        vcode_m = re.search(r"versionCode='([^']+)'", badging_out)
+        if vcode_m:
+            manifest_data["version_code"] = vcode_m.group(1)
+
+        vname_m = re.search(r"versionName='([^']+)'", badging_out)
+        if vname_m:
+            manifest_data["version_name"] = vname_m.group(1)
+
+        sdk_m = re.search(r"sdkVersion:'([^']+)'", badging_out)
+        if sdk_m:
+            manifest_data["min_sdk"] = sdk_m.group(1)
+
+        target_m = re.search(r"targetSdkVersion:'([^']+)'", badging_out)
+        if target_m:
+            manifest_data["target_sdk"] = target_m.group(1)
+
+        label_m = re.search(r"application-label(?:-[a-zA-Z0-9_\-]+)?:'([^']*)'", badging_out)
+        if not label_m:
+            label_m = re.search(r"application:\s+label='([^']*)'", badging_out)
+        if label_m:
+            manifest_data["application_label"] = label_m.group(1)
+        elif manifest_data["package_name"] != "Unknown":
+            manifest_data["application_label"] = manifest_data["package_name"]
+
+        # Uses-permissions
+        perms = re.findall(r"uses-permission(?:-sdk-[0-9]+)?:\s+name='([^']+)'", badging_out)
+        for p in perms:
+            if p not in manifest_data["permissions"]:
+                manifest_data["permissions"].append(p)
+
+        # Launchable activities
+        launch_m = re.findall(r"launchable-activity:\s+name='([^']+)'", badging_out)
+        for act in launch_m:
+            comp = {"type": "activity", "name": act, "exported": True, "permission": "", "actions": ["android.intent.action.MAIN"]}
+            manifest_data["activities"].append(comp)
+            manifest_data["exported_components"].append(comp)
+
+        # Step 2: Parse full XML tree for complete component inventory
+        res_tree = subprocess.run(
+            ["aapt", "dump", "xmltree", str(apk_path), "AndroidManifest.xml"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=30,
+        )
+        if res_tree.returncode == 0 and res_tree.stdout:
+            current_elem = None
+            current_name = None
+            current_exp = None
+            current_perm = ""
+            current_actions: List[str] = []
+
+            def flush_comp():
+                nonlocal current_elem, current_name, current_exp, current_perm, current_actions
+                if current_elem and current_name:
+                    is_exp = (current_exp in ("0xffffffff", "true", "1"))
+                    comp = {
+                        "type": current_elem,
+                        "name": current_name,
+                        "exported": is_exp,
+                        "permission": current_perm,
+                        "actions": list(current_actions),
+                    }
+                    if current_elem == "activity":
+                        if not any(a["name"] == current_name for a in manifest_data["activities"]):
+                            manifest_data["activities"].append(comp)
+                    elif current_elem == "service":
+                        if not any(s["name"] == current_name for s in manifest_data["services"]):
+                            manifest_data["services"].append(comp)
+                            if "BIND_ACCESSIBILITY_SERVICE" in current_perm or any("accessibility" in a.lower() for a in current_actions):
+                                manifest_data["accessibility_services"].append(comp)
+                            if any("vpn" in a.lower() for a in current_actions):
+                                manifest_data["vpn_services"].append(comp)
+                    elif current_elem == "receiver":
+                        if not any(r["name"] == current_name for r in manifest_data["receivers"]):
+                            manifest_data["receivers"].append(comp)
+                            if any("BOOT_COMPLETED" in a for a in current_actions):
+                                manifest_data["boot_receivers"].append(comp)
+                            if "BIND_DEVICE_ADMIN" in current_perm:
+                                manifest_data["device_admin_receivers"].append(comp)
+                    elif current_elem == "provider":
+                        if not any(pr["name"] == current_name for pr in manifest_data["providers"]):
+                            manifest_data["providers"].append(comp)
+
+                    if is_exp and not any(ec["name"] == current_name for ec in manifest_data["exported_components"]):
+                        manifest_data["exported_components"].append(comp)
+
+                current_elem = None
+                current_name = None
+                current_exp = None
+                current_perm = ""
+                current_actions = []
+
+            for line in res_tree.stdout.splitlines():
+                m_elem = re.search(r"^\s*E:\s*(activity|service|receiver|provider)\b", line)
+                if m_elem:
+                    flush_comp()
+                    current_elem = m_elem.group(1)
+                    continue
+
+                if current_elem:
+                    m_name = re.search(r"A:\s*android:name\([^)]*\)=\"([^\"]+)\"", line)
+                    if m_name and not current_name:
+                        current_name = m_name.group(1)
+
+                    m_exp = re.search(r"A:\s*android:exported\([^)]*\)=\(type\s+0x[0-9a-fA-F]+\)(0x[0-9a-fA-F]+)", line)
+                    if m_exp:
+                        current_exp = m_exp.group(1)
+
+                    m_perm = re.search(r"A:\s*android:permission\([^)]*\)=\"([^\"]+)\"", line)
+                    if m_perm:
+                        current_perm = m_perm.group(1)
+
+                    if "action" in line:
+                        m_act = re.search(r"A:\s*android:name\([^)]*\)=\"([^\"]+)\"", line)
+                        if m_act:
+                            current_actions.append(m_act.group(1))
+
+            flush_comp()
+
+        if manifest_data["package_name"] != "Unknown":
+            return manifest_data
+        return None
+    except Exception as e:
+        print(f"[-] aapt parsing notice: {e}", file=sys.stderr)
+        return None
+
+
 def parse_apk_manifest(apk_path: Path) -> Dict[str, Any]:
     """Extract and parse AndroidManifest.xml from the APK."""
+    # First priority: Fast, 100% accurate system aapt extraction
+    aapt_result = parse_manifest_with_aapt(apk_path)
+    if aapt_result and aapt_result.get("package_name") != "Unknown":
+        return aapt_result
+
     manifest_data = {
         "package_name": "Unknown",
         "version_code": "Unknown",
@@ -359,7 +531,7 @@ def parse_apk_manifest(apk_path: Path) -> Dict[str, Any]:
 
             walk_elements(tree)
     except Exception as e:
-        print(f"[!] Warning: Exception during AXML parsing: {e}", file=sys.stderr)
+        print(f"[-] Warning during AXML parsing: {e}", file=sys.stderr)
 
     return manifest_data
 
@@ -475,6 +647,117 @@ def inspect_apk_code_patterns(all_strings: List[str]) -> Dict[str, List[str]]:
     return results
 
 
+def detect_apk_provenance(
+    apk_path: Path,
+    manifest: Dict[str, Any],
+    extracted_indicators: Dict[str, Any],
+    case_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Detect installation timestamps, download sources, and package origin."""
+    package_name = manifest.get("package_name", "Unknown")
+    provenance = {
+        "package_name": package_name,
+        "first_install_time": "Unknown",
+        "last_update_time": "Unknown",
+        "download_source": "Unknown",
+        "installer_package": "Unknown",
+        "originating_uri": "Unknown",
+        "referrer_uri": "Unknown",
+        "acquisition_time_utc": "Unknown",
+        "build_timestamp_utc": "Unknown",
+    }
+
+    # 1. Check if package metadata was saved from dumpsys in case directory
+    if case_dir:
+        meta_file = case_dir / "evidence" / "device_inventory" / f"package_meta_{package_name}.json"
+        if meta_file.exists():
+            try:
+                pkg_data = json.loads(meta_file.read_text(encoding="utf-8"))
+                dumpsys_meta = pkg_data.get("dumpsys_metadata", {})
+                provenance["first_install_time"] = dumpsys_meta.get("first_install_time", "Unknown")
+                provenance["last_update_time"] = dumpsys_meta.get("last_update_time", "Unknown")
+                provenance["installer_package"] = dumpsys_meta.get("installer_package", "Unknown")
+                provenance["originating_uri"] = dumpsys_meta.get("originating_uri", "Unknown")
+                provenance["referrer_uri"] = dumpsys_meta.get("referrer_uri", "Unknown")
+                provenance["download_source"] = dumpsys_meta.get("download_source", "Unknown")
+            except Exception:
+                pass
+
+        # Also check evidence_hashes.json for acquisition timestamp
+        hashes_file = case_dir / "hashes" / "evidence_hashes.json"
+        if hashes_file.exists():
+            try:
+                hdata = json.loads(hashes_file.read_text(encoding="utf-8"))
+                for entry in hdata:
+                    if entry.get("filename") == apk_path.name or apk_path.name in entry.get("relative_path", ""):
+                        provenance["acquisition_time_utc"] = entry.get("collected_at_utc", "Unknown")
+                        break
+            except Exception:
+                pass
+
+    # 2. Derive install timestamp if not found in dumpsys
+    if provenance["first_install_time"] == "Unknown":
+        if provenance["acquisition_time_utc"] != "Unknown":
+            provenance["first_install_time"] = f"{provenance['acquisition_time_utc']} (Device Acquisition)"
+        else:
+            try:
+                mtime = datetime.fromtimestamp(apk_path.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                provenance["first_install_time"] = f"{mtime} (File Ingestion)"
+            except Exception:
+                pass
+
+    # 3. Detect build timestamp from ZIP
+    try:
+        with zipfile.ZipFile(apk_path, "r") as z:
+            valid_dts = []
+            for info in z.infolist():
+                if info.date_time[0] > 1982:
+                    dt = datetime(*info.date_time, tzinfo=timezone.utc)
+                    valid_dts.append(dt)
+            if valid_dts:
+                provenance["build_timestamp_utc"] = max(valid_dts).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except Exception:
+        pass
+
+    # 4. Derive Download Source / Origin if Unknown
+    if provenance["download_source"] in ("Unknown", ""):
+        inst_pkg = provenance.get("installer_package", "")
+        orig_uri = provenance.get("originating_uri", "")
+
+        if orig_uri and orig_uri != "Unknown":
+            provenance["download_source"] = f"Direct Download Link (URL: {orig_uri})"
+        elif inst_pkg == "com.android.vending":
+            provenance["download_source"] = "Google Play Store (com.android.vending)"
+        elif inst_pkg in ("com.google.android.packageinstaller", "com.android.packageinstaller"):
+            provenance["download_source"] = "Manual Sideload (Android Package Installer)"
+        elif inst_pkg == "com.android.shell":
+            provenance["download_source"] = "Direct ADB Sideload (Developer Bridge)"
+        elif "chrome" in inst_pkg or "browser" in inst_pkg:
+            provenance["download_source"] = f"Web Browser Download ({inst_pkg})"
+        else:
+            # Inspect manifest permissions & strings for Google Play or Direct Download signatures
+            perms = manifest.get("permissions", [])
+            version_name = str(manifest.get("version_name", "")).lower()
+            is_play = (
+                "googleplay" in version_name
+                or "com.android.vending.BILLING" in perms
+                or "com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE" in perms
+            )
+            if is_play:
+                provenance["download_source"] = "Google Play Store (Identified via Play Billing & Referrer Signatures)"
+                provenance["installer_package"] = "com.android.vending"
+            else:
+                # Check extracted URLs for possible download sources
+                urls = [u.get("indicator") for u in extracted_indicators.get("urls", []) if isinstance(u, dict)]
+                download_urls = [u for u in urls if u and (".apk" in u.lower() or "download" in u.lower())]
+                if download_urls:
+                    provenance["download_source"] = f"Web Link / Server Origin ({download_urls[0]})"
+                else:
+                    provenance["download_source"] = "Manual Sideload / Package Ingestion"
+
+    return provenance
+
+
 def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Perform comprehensive static forensic analysis of an APK."""
     if not apk_path.exists():
@@ -537,12 +820,23 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
     # Step 7: Signing & Certificate Information
     signing_info = extract_apk_signing_info(apk_path)
 
-    # Step 8: Categorize findings into Facts, Indicators, and Hypotheses
+    # Step 8: Provenance, Installation Timestamp & Download Origin
+    case_context_dir = None
+    if output_analysis_dir:
+        # Check standard layout: case_dir / analysis / apk_analysis
+        candidate_case = output_analysis_dir.parent.parent
+        if (candidate_case / "case.json").exists():
+            case_context_dir = candidate_case
+    provenance = detect_apk_provenance(apk_path, manifest, extracted_indicators, case_dir=case_context_dir)
+
+    # Step 9: Categorize findings into Facts, Indicators, and Hypotheses
     observed_facts = [
         f"Package Name: {manifest.get('package_name')}",
         f"Application Label: {manifest.get('application_label')}",
         f"Version Name: {manifest.get('version_name')}, Code: {manifest.get('version_code')}",
         f"Min SDK: {manifest.get('min_sdk')}, Target SDK: {manifest.get('target_sdk')}",
+        f"Download Source: {provenance.get('download_source')}",
+        f"Install / Acquisition Timestamp: {provenance.get('first_install_time')}",
         f"File Size: {hashes['size_bytes']} bytes",
         f"SHA256: {hashes['sha256']}",
         f"DEX Bytecode Files: {', '.join(embedded_dex) if embedded_dex else 'None detected'}",
@@ -623,6 +917,7 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
         "apk_path": str(apk_path.resolve()),
         "hashes": hashes,
         "manifest": manifest,
+        "provenance": provenance,
         "permissions_analysis": perm_report,
         "signing_info": signing_info,
         "observed_patterns": observed_patterns,

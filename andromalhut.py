@@ -69,19 +69,91 @@ from modules.ollama_analysis import (
     run_case_ollama_explanation,
 )
 
+import threading
+import time
+
 TOOL_VERSION = "1.0.0"
 AUTHOR = "aryxan"
 REPO_URL = "https://github.com/aryxan/AndroMalHut"
 
-# ANSI Color formatting
+# High-contrast ANSI Color formatting
 C_RESET = "\033[0m"
 C_BOLD = "\033[1m"
-C_RED = "\033[31m"
-C_GREEN = "\033[32m"
-C_YELLOW = "\033[33m"
-C_BLUE = "\033[34m"
-C_CYAN = "\033[36m"
+C_WHITE = "\033[1;97m"      # Maximum contrast crisp bold white
+C_RED = "\033[1;91m"
+C_GREEN = "\033[1;92m"
+C_YELLOW = "\033[1;93m"
+C_BLUE = "\033[1;94m"
+C_CYAN = "\033[1;96m"
 C_GRAY = "\033[90m"
+
+
+def clear_screen() -> None:
+    """Clear terminal screen for clean layout."""
+    os.system("clear" if os.name != "nt" else "cls")
+
+
+class ForensicSpinner:
+    """Professional non-intrusive terminal progress spinner with animation."""
+    def __init__(self, message: str = "Processing evidence..."):
+        self.message = message
+        self._stop_event = threading.Event()
+        self._thread = None
+        self.frames = ["[|]", "[/]", "[-]", "[\\]"]
+
+    def _spin(self):
+        idx = 0
+        while not self._stop_event.is_set():
+            frame = self.frames[idx % len(self.frames)]
+            sys.stdout.write(f"\r  {C_CYAN}{frame}{C_RESET} {self.message} ")
+            sys.stdout.flush()
+            idx += 1
+            time.sleep(0.12)
+        sys.stdout.write(f"\r  {C_GREEN}[DONE]{C_RESET} {self.message}\n")
+        sys.stdout.flush()
+
+    def __enter__(self):
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join()
+
+
+def open_pdf_in_browser(pdf_path: Path) -> bool:
+    """Launch the generated PDF forensic report directly inside a modern web browser."""
+    if not pdf_path.exists():
+        print(f"{C_RED}[!] PDF file does not exist: {pdf_path}{C_RESET}")
+        return False
+
+    browsers = ["firefox", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser", "xdg-open"]
+    found_browser = None
+    for b in browsers:
+        if shutil.which(b):
+            found_browser = b
+            break
+
+    if not found_browser:
+        print(f"{C_YELLOW}[!] No web browser detected in PATH. File saved at: {pdf_path}{C_RESET}")
+        return False
+
+    try:
+        abs_uri = f"file://{pdf_path.resolve()}"
+        print(f"{C_CYAN}[➜] Opening PDF in browser ({found_browser}): {pdf_path.name}...{C_RESET}")
+        subprocess.Popen(
+            [found_browser, abs_uri],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True
+    except Exception as e:
+        print(f"{C_RED}[!] Failed to launch browser: {e}{C_RESET}")
+        return False
 
 
 def print_banner() -> None:
@@ -126,17 +198,26 @@ def print_banner() -> None:
     )
 
     print(f"""
-{C_CYAN}{C_BOLD}{ascii_art}
-{C_RESET}{C_BOLD} AndroMalHut • Android Malware Forensics & Incident Response v{TOOL_VERSION}{C_RESET}
-{C_GRAY} Maintainer: {AUTHOR} • {REPO_URL}{C_RESET}
-{C_GRAY} Strictly Educational & Authorized Defensive Incident Response • Read-Only{C_RESET}
+{C_WHITE}{ascii_art}{C_RESET}
+  {C_WHITE}ANDROMALHUT{C_RESET} :: {C_CYAN}Android Malware Forensics & Incident Response v{TOOL_VERSION}{C_RESET}
+  {C_GRAY}Author: {AUTHOR} | GitHub: {REPO_URL}{C_RESET}
 
-{C_CYAN}╭─────────────────────────────────────────────────────────────────────────────╮
-│ {C_BOLD}Active Scan{C_RESET}{C_CYAN} : {C_GREEN if active else C_YELLOW}{case_name:<20}{C_RESET}{C_CYAN} │ {C_BOLD}Folder{C_RESET}{C_CYAN}: {C_GRAY}{case_path[:42]:<42}{C_RESET}{C_CYAN}│
-│ {C_BOLD}ML Engine{C_RESET}{C_CYAN}   : {ml_status:<62}│
-│ {C_BOLD}Device ADB{C_RESET}{C_CYAN}  : {adb_status:<62}│
-│ {C_BOLD}AI Triage{C_RESET}{C_CYAN}   : {ai_status:<62}│
-╰─────────────────────────────────────────────────────────────────────────────╯{C_RESET}""")
+{C_CYAN}+-----------------------------------------------------------------------------+
+|                        LEGAL & COMPLIANCE NOTICE                            |
++-----------------------------------------------------------------------------+
+|                                                                             |
+|   AndroMalHut is strictly intended for educational, academic research,      |
+|   and authorized defensive digital forensics and incident response.         |
+|                                                                             |
+|   Unauthorized acquisition, extraction, or compromise of mobile devices     |
+|   without explicit written owner permission is strictly prohibited.         |
+|                                                                             |
++-----------------------------------------------------------------------------+
+| Active Scan : {C_GREEN if active else C_YELLOW}{case_name:<20}{C_RESET}{C_CYAN} | Folder: {C_GRAY}{case_path[:42]:<42}{C_RESET}{C_CYAN}|
+| ML Engine   : {ml_status:<62}|
+| Device ADB  : {adb_status:<62}|
+| AI Triage   : {ai_status:<62}|
++-----------------------------------------------------------------------------+{C_RESET}""")
 
 
 def check_tool_dependencies() -> Dict[str, Dict[str, Any]]:
@@ -390,25 +471,27 @@ def run_interactive_menu() -> None:
     """Run the main interactive forensic menu with unified workflows and subfolders."""
     # On initial launch, if no active case is set, prompt for scan name immediately
     if not get_active_case():
+        clear_screen()
         prompt_scan_name(open_folder=True)
 
     while True:
+        clear_screen()
         print_banner()
         active = get_active_case()
         if not active or not active.exists():
             active = prompt_scan_name(open_folder=True)
 
-        print(f"{C_BOLD}Forensic Investigation Workflows:{C_RESET}")
+        print(f"\n{C_BOLD}Forensic Investigation Workflows:{C_RESET}")
         menu_items = [
-            ("1", "⚡ Scan Suspicious APK", "ML Malware Classifier + Static Dissection + AI Triage"),
-            ("2", "📱 Connected Phone Scanner", "Device Info, Full App Inventory & Pull APK"),
-            ("3", "🔍 Deep App Inspector", "Permissions, Threat Severity & Signature Inspection"),
-            ("4", "🛡️  Forensics & Telemetry", "Logcat, SMS Forensics, Network PCAP & C2 Indicators"),
-            ("5", "📑 Generate Forensic Reports", "Executive PDF Dossier & Detailed Markdown Summary"),
-            ("6", "📁 Manage Scans & Folders", "Create New Scan, Switch Scan or Open Active Folder"),
-            ("7", "🔒 Verify Evidence Integrity", "Cryptographic Hash Manifest Validation (SHA-256)"),
-            ("8", "⚙️  System Diagnostics", "Inspect ADB, ML Models, Python Environment & Tools"),
-            ("0", "🚪 Exit AndroMalHut", "Safely exit forensic toolkit"),
+            ("1", "Static APK Forensics & ML", "Decompile, inspect manifest, permissions & ML triage"),
+            ("2", "Connected Phone Scanner", "Device hardware details, full app inventory & APK pull"),
+            ("3", "Deep Application Inspector", "Component analysis, risk scoring & signature audit"),
+            ("4", "Forensics & Telemetry", "Logcat extraction, SMS forensics, PCAP network dissection"),
+            ("5", "Generate Forensic Reports", "Generate Dossier in PDF (with browser preview) & Markdown"),
+            ("6", "Manage Scans & Evidence", "Switch scan, create scan folder or open in file manager"),
+            ("7", "Verify Evidence Integrity", "Cryptographic Hash Manifest Verification (SHA-256)"),
+            ("8", "System & Tool Diagnostics", "Inspect ADB, ML Models, Python environment & tools"),
+            ("0", "Exit AndroMalHut", "Safely exit forensic toolkit"),
         ]
 
         for num, title, desc in menu_items:
@@ -424,11 +507,12 @@ def run_interactive_menu() -> None:
         print()
 
         if choice == "1":
-            # === [1] ⚡ Scan Suspicious APK ===
+            # === [1] Static APK Forensics & ML ===
+            clear_screen()
             case_dir = require_case()
-            print(f"{C_CYAN}{C_BOLD}╭─────────────────────────────────────────────────────────────────╮{C_RESET}")
-            print(f"{C_CYAN}{C_BOLD}│          ⚡ COMPREHENSIVE APK SCANNER & THREAT TRIAGE           │{C_RESET}")
-            print(f"{C_CYAN}{C_BOLD}╰─────────────────────────────────────────────────────────────────╯{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}|         [1] COMPREHENSIVE APK SCANNER & THREAT TRIAGE           |{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
 
             # Check for existing APKs in case evidence
             existing_apks: List[Path] = []
@@ -481,7 +565,9 @@ def run_interactive_menu() -> None:
 
             # Step 1: Machine Learning Classifier
             print(f"\n{C_BOLD}[1/3] Running ML Malware Classifier (Drebin + AndroZoo RF)...{C_RESET}")
-            ml_res = run_ml_classifier(preserved, case_dir)
+            with ForensicSpinner("Analyzing features against 25,722 trained malware samples..."):
+                ml_res = run_ml_classifier(preserved, case_dir)
+
             if ml_res.get("status") == "SUCCESS":
                 v = ml_res.get("verdict", "UNKNOWN")
                 p = ml_res.get("malware_probability", 0.0) * 100
@@ -490,7 +576,7 @@ def run_interactive_menu() -> None:
                 print(f"    Malware Probability  : {v_color}{p:.1f}%{C_RESET} (Benign: {100 - p:.1f}%)")
                 print(f"    Active Risk Features : {ml_res.get('active_features', 0)}")
                 for th in ml_res.get("highlighted_threats", []):
-                    print(f"    {C_YELLOW}⚠ {th}{C_RESET}")
+                    print(f"    {C_YELLOW}[!] {th}{C_RESET}")
                 print(f"    ML Output Saved      : {ml_res.get('report_file')}")
             else:
                 print(f"{C_YELLOW}[!] ML Classifier note: {ml_res.get('status')} ({ml_res.get('reason', '')}){C_RESET}")
@@ -498,14 +584,19 @@ def run_interactive_menu() -> None:
             # Step 2: Deep Static Dissection & Indicator Extraction
             print(f"\n{C_BOLD}[2/3] Performing Static APK Dissection & Pattern Extraction...{C_RESET}")
             out_analysis = case_dir / "analysis" / "apk_analysis"
-            res = analyze_apk(preserved, output_analysis_dir=out_analysis)
-            json_save = out_analysis / f"apk_analysis_{preserved.stem}.json"
-            json_save.write_text(json.dumps(res, indent=2), encoding="utf-8")
+            with ForensicSpinner("Parsing manifest, DEX string pool, native libraries & network IOCs..."):
+                res = analyze_apk(preserved, output_analysis_dir=out_analysis)
+                json_save = out_analysis / f"apk_analysis_{preserved.stem}.json"
+                json_save.write_text(json.dumps(res, indent=2), encoding="utf-8")
 
             m = res.get("manifest", {})
             pa = res.get("permissions_analysis", {})
             net = res.get("network_indicators", {})
+            prov = res.get("provenance", {})
+
             print(f"    Package Identifier   : {m.get('package_name')} ({m.get('application_label') or 'Unknown App'})")
+            print(f"    Download Source      : {C_BOLD}{prov.get('download_source', 'Unknown')}{C_RESET}")
+            print(f"    Install / Acquisition: {prov.get('first_install_time', 'Unknown')}")
             print(f"    Version Info         : {m.get('version_name')} (code {m.get('version_code')})")
             print(f"    Permission Score     : {pa.get('risk_score', 0)}/100 ({pa.get('overall_severity', 'INFO')})")
             print(f"    Exported Components  : {len(m.get('exported_components', []))}")
@@ -519,7 +610,8 @@ def run_interactive_menu() -> None:
             if ollama_ok and models:
                 run_ai = input(f"Run local AI triage briefing using {models[0]}? [Y/n]: ").strip().lower()
                 if run_ai in ("", "y", "yes"):
-                    ai_res = run_case_ollama_explanation(case_dir, model_name=models[0])
+                    with ForensicSpinner(f"Querying Ollama model {models[0]} for defensive triage..."):
+                        ai_res = run_case_ollama_explanation(case_dir, model_name=models[0])
                     if ai_res.get("status") == "SUCCESS":
                         triage_dir = case_dir / "analysis" / "ai_triage"
                         triage_dir.mkdir(parents=True, exist_ok=True)
@@ -533,19 +625,28 @@ def run_interactive_menu() -> None:
             # Immediate Report Generation
             gen_rep = input(f"\n{C_BOLD}Generate executive PDF and Markdown reports now? [Y/n]:{C_RESET} ").strip().lower()
             if gen_rep in ("", "y", "yes"):
-                md_path = generate_markdown_report(case_dir)
+                with ForensicSpinner("Compiling forensic reports and rendering PDF dossier..."):
+                    md_path = generate_markdown_report(case_dir)
+                    pdf_path, pdf_err = generate_pdf_report(case_dir)
+
                 print(f"{C_GREEN}[+] Markdown Report:{C_RESET} {md_path}")
-                pdf_path, pdf_err = generate_pdf_report(case_dir)
                 if pdf_path:
                     print(f"{C_GREEN}[+] Executive PDF Dossier:{C_RESET} {pdf_path}")
-                    open_pdf = input(f"Open PDF report in viewer? [Y/n]: ").strip().lower()
-                    if open_pdf in ("", "y", "yes"):
-                        open_system_folder(pdf_path)
+                    print(f"\n{C_BOLD}Report Actions:{C_RESET}")
+                    print("  [1] Open PDF Dossier in Web Browser (Firefox / Chrome / Chromium)")
+                    print("  [2] Open Reports Folder in File Manager")
+                    print("  [3] Continue")
+                    rep_opt = input(f"\n{C_BOLD}Select action [1-3] (Default: 1):{C_RESET} ").strip()
+                    if rep_opt in ("", "1"):
+                        open_pdf_in_browser(pdf_path)
+                    elif rep_opt == "2":
+                        open_system_folder(pdf_path.parent)
                 else:
                     print(f"{C_YELLOW}[!] PDF skipped: {pdf_err}{C_RESET}")
 
         elif choice == "2":
-            # === [2] 📱 Connected Phone Scanner ===
+            # === [2] Connected Phone Scanner ===
+            clear_screen()
             case_dir = require_case()
             if not is_adb_installed():
                 print(f"{C_RED}[!] ADB is not installed. Install with: sudo apt install adb{C_RESET}")
@@ -610,8 +711,12 @@ def run_interactive_menu() -> None:
                                 print(f"{C_RED}[!] Error pulling APK: {pull_res.get('error')}{C_RESET}")
 
         elif choice == "3":
-            # === [3] 🔍 Deep App Inspector ===
+            # === [3] Deep Application Inspector ===
+            clear_screen()
             case_dir = require_case()
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}|         [3] DEEP APPLICATION FORENSIC INSPECTOR                 |{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
             packages: List[Tuple[str, str]] = []
             inventory_dir = case_dir / "evidence" / "device_inventory"
             inventory_files = sorted(
@@ -714,11 +819,12 @@ def run_interactive_menu() -> None:
                     print(f"{C_RED}[!] Error inspecting package: {res.get('error')}{C_RESET}")
 
         elif choice == "4":
-            # === [4] 🛡️ Forensics & Telemetry ===
+            # === [4] Forensics & Telemetry ===
+            clear_screen()
             case_dir = require_case()
-            print(f"{C_CYAN}{C_BOLD}╭─────────────────────────────────────────────────────────────────╮{C_RESET}")
-            print(f"{C_CYAN}{C_BOLD}│            🛡️ FORENSICS, TELEMETRY & NETWORK IOCs               │{C_RESET}")
-            print(f"{C_CYAN}{C_BOLD}╰─────────────────────────────────────────────────────────────────╯{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}|         [4] FORENSICS, TELEMETRY & NETWORK IOCs                 |{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
             print("  [1] Collect Device Logcat & System Logs")
             print("  [2] Extract / Import SMS Evidence (Phishing & 2FA Analysis)")
             print("  [3] Dissect Network PCAP / PCAPNG & Extract C2 Traffic")
@@ -729,7 +835,8 @@ def run_interactive_menu() -> None:
             tele_sub = input(f"\n{C_BOLD}Select forensics operation [0-5]:{C_RESET} ").strip()
             if tele_sub == "1":
                 print("[*] Collecting available device logs via ADB...")
-                log_res = collect_device_logs(case_dir)
+                with ForensicSpinner("Collecting logcat and system logs..."):
+                    log_res = collect_device_logs(case_dir)
                 if log_res.get("status") == "SUCCESS":
                     print(f"{C_GREEN}[+] Successfully collected {log_res['collected_logs_count']} log streams:{C_RESET}")
                     for item in log_res.get("files", []):
@@ -776,7 +883,8 @@ def run_interactive_menu() -> None:
                         )
                         print(f"{C_GREEN}[+] Evidence recorded:{C_RESET} {preserved}")
                         print("[*] Dissecting network packets and extracting C2 indicators...")
-                        res = analyze_network_evidence(preserved, case_dir=case_dir)
+                        with ForensicSpinner("Running tshark protocol dissection & extracting IOCs..."):
+                            res = analyze_network_evidence(preserved, case_dir=case_dir)
                         if res.get("status") == "SUCCESS":
                             print(f"{C_GREEN}[+] Discovered {res['indicators_count']} indicators.{C_RESET}")
                             for ind in res.get("indicators", [])[:10]:
@@ -815,7 +923,8 @@ def run_interactive_menu() -> None:
 
             elif tele_sub == "5":
                 print("[*] Correlating incident timeline across all case artifacts...")
-                events = build_incident_timeline(case_dir)
+                with ForensicSpinner("Compiling timeline across device events and evidence..."):
+                    events = build_incident_timeline(case_dir)
                 print(f"{C_GREEN}[+] Successfully correlated {len(events)} chronological events.{C_RESET}")
                 if events:
                     print(f"\n{C_BOLD}Recent Timeline Events:{C_RESET}")
@@ -823,11 +932,12 @@ def run_interactive_menu() -> None:
                         print(f"  [{ev.get('timestamp_utc')[:19]}] {ev.get('event_type'):<20} | {ev.get('description')[:70]}")
 
         elif choice == "5":
-            # === [5] 📑 Generate Forensic Reports ===
+            # === [5] Generate Forensic Reports ===
+            clear_screen()
             case_dir = require_case()
-            print(f"{C_CYAN}{C_BOLD}╭─────────────────────────────────────────────────────────────────╮{C_RESET}")
-            print(f"{C_CYAN}{C_BOLD}│                 📑 GENERATE FORENSIC REPORTS                    │{C_RESET}")
-            print(f"{C_CYAN}{C_BOLD}╰─────────────────────────────────────────────────────────────────╯{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}|         [5] GENERATE FORENSIC DOSSIER & REPORTS                 |{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
             print("  [1] Complete 16-Section Markdown Forensic Report")
             print("  [2] Professional Executive PDF Dossier (ReportLab)")
             print("  [3] Generate Both (Markdown & PDF)")
@@ -836,26 +946,35 @@ def run_interactive_menu() -> None:
             rep_sub = input(f"\n{C_BOLD}Select report format [0-3]:{C_RESET} ").strip()
             pdf_path = None
             if rep_sub in ("1", "3"):
-                md_path = generate_markdown_report(case_dir)
+                with ForensicSpinner("Rendering 16-section Markdown forensic report..."):
+                    md_path = generate_markdown_report(case_dir)
                 print(f"{C_GREEN}[+] Markdown Report:{C_RESET} {md_path}")
             if rep_sub in ("2", "3"):
-                pdf_path, pdf_err = generate_pdf_report(case_dir)
+                with ForensicSpinner("Generating cryptographic PDF forensic report..."):
+                    pdf_path, pdf_err = generate_pdf_report(case_dir)
                 if pdf_path:
-                    print(f"{C_GREEN}[+] PDF Report:{C_RESET} {pdf_path}")
+                    print(f"{C_GREEN}[+] Executive PDF Dossier:{C_RESET} {pdf_path}")
                 else:
                     print(f"{C_RED}[!] PDF generation failed: {pdf_err}{C_RESET}")
 
             if pdf_path:
-                open_pdf = input(f"\nOpen PDF report in viewer now? [Y/n]: ").strip().lower()
-                if open_pdf in ("", "y", "yes"):
-                    open_system_folder(pdf_path)
+                print(f"\n{C_BOLD}Forensic Report Options:{C_RESET}")
+                print("  [1] Open PDF Report directly in Web Browser (Firefox / Chrome / Chromium)")
+                print("  [2] Open Reports Folder in File Manager")
+                print("  [3] Return to Main Menu")
+                rep_opt = input(f"\n{C_BOLD}Select option [1-3] (Default: 1):{C_RESET} ").strip()
+                if rep_opt in ("", "1"):
+                    open_pdf_in_browser(pdf_path)
+                elif rep_opt == "2":
+                    open_system_folder(pdf_path.parent)
 
         elif choice == "6":
-            # === [6] 📁 Manage Scans & Folders ===
+            # === [6] Manage Scans & Folders ===
+            clear_screen()
             base_dir = get_default_base_dir()
-            print(f"{C_CYAN}{C_BOLD}╭─────────────────────────────────────────────────────────────────╮{C_RESET}")
-            print(f"{C_CYAN}{C_BOLD}│                   📁 SCAN & FOLDER MANAGER                      │{C_RESET}")
-            print(f"{C_CYAN}{C_BOLD}╰─────────────────────────────────────────────────────────────────╯{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}|         [6] SCAN & EVIDENCE FOLDER MANAGER                      |{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
             active = get_active_case()
             print(f"{C_BOLD}Active Scan:{C_RESET} {C_GREEN if active else C_YELLOW}{active.name if active else 'None'}{C_RESET}")
             print(f"{C_BOLD}Location   :{C_RESET} {active if active else 'N/A'}")
@@ -894,10 +1013,14 @@ def run_interactive_menu() -> None:
                         open_system_folder(target_path)
 
         elif choice == "7":
-            # === [7] 🔒 Verify Evidence Integrity ===
+            # === [7] Verify Evidence Integrity ===
+            clear_screen()
             case_dir = require_case()
-            print(f"\n{C_BOLD}=== Cryptographic Hash Verification (SHA-256 / SHA-1 / MD5) ==={C_RESET}")
-            results = verify_case_hashes(case_dir)
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}|         [7] EVIDENCE INTEGRITY & HASH VERIFICATION              |{C_RESET}")
+            print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
+            with ForensicSpinner("Validating SHA-256, SHA-1, and MD5 hashes across preserved evidence..."):
+                results = verify_case_hashes(case_dir)
             if not results:
                 print(f"{C_YELLOW}[!] No evidence hash manifest recorded for this case.{C_RESET}")
             else:
@@ -909,7 +1032,8 @@ def run_interactive_menu() -> None:
                     print(f"  {st_str} {r.get('filename')}: {r.get('details')}")
 
         elif choice == "8":
-            # === [8] ⚙️ System Diagnostics ===
+            # === [8] System Diagnostics ===
+            clear_screen()
             display_dependencies()
 
         elif choice == "0":

@@ -81,7 +81,9 @@ def load_case_data(case_dir: Path) -> Dict[str, Any]:
     data: Dict[str, Any] = {
         "case": {},
         "hashes": [],
+        "device_info": None,
         "inventory": None,
+        "package_metadata": {},
         "apk_analysis": [],
         "network_analysis": [],
         "sms_analysis": [],
@@ -109,12 +111,41 @@ def load_case_data(case_dir: Path) -> Dict[str, Any]:
     # device_inventory
     inv_dir = case_dir / "evidence" / "device_inventory"
     if inv_dir.exists():
-        for f in inv_dir.glob("*.json"):
+        dev_info_file = inv_dir / "device_info.json"
+        if dev_info_file.exists():
+            try:
+                data["device_info"] = json.loads(dev_info_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        # Load installed_apps JSON
+        for f in sorted(inv_dir.glob("installed_apps_*.json"), reverse=True):
             try:
                 data["inventory"] = json.loads(f.read_text(encoding="utf-8"))
                 break
             except Exception:
                 pass
+
+        # Load any package_meta_*.json
+        for f in inv_dir.glob("package_meta_*.json"):
+            try:
+                pm = json.loads(f.read_text(encoding="utf-8"))
+                pname = pm.get("package_name") or f.stem.replace("package_meta_", "")
+                data["package_metadata"][pname] = pm
+            except Exception:
+                pass
+
+    # Auto-resolve device identifier from device_info if unassigned or Unknown
+    if data.get("device_info"):
+        dinfo = data["device_info"]
+        mfr = dinfo.get("manufacturer", "")
+        model = dinfo.get("model", "")
+        aver = dinfo.get("android_version", "")
+        api = dinfo.get("api_level", "")
+        dev_label = f"{mfr} {model} (Android {aver}, API {api})".strip()
+        current_id = data["case"].get("device_identifier", "")
+        if (not current_id or current_id == "Unknown Device") and dev_label:
+            data["case"]["device_identifier"] = dev_label
 
     # apk_analysis
     apk_dir = case_dir / "analysis" / "apk_analysis"
@@ -201,15 +232,28 @@ def generate_markdown_report(case_dir: Path, operator: Optional[str] = None) -> 
     # Section 3: Device Details
     report_lines.append("## 3. Device Details\n")
     report_lines.append(f"- **Target Device Identifier:** {case_meta.get('device_identifier', 'Unknown Device')}")
-    if data["inventory"]:
+    if data.get("device_info"):
+        dinfo = data["device_info"]
+        report_lines.append(f"- **Manufacturer / Brand:** {dinfo.get('manufacturer', 'N/A')} ({dinfo.get('brand', 'N/A')})")
+        report_lines.append(f"- **Model:** {dinfo.get('model', 'N/A')}")
+        report_lines.append(f"- **Android Version:** {dinfo.get('android_version', 'N/A')} (API Level {dinfo.get('api_level', 'N/A')})")
+        report_lines.append(f"- **Security Patch Level:** {dinfo.get('security_patch', 'N/A')}")
+        report_lines.append(f"- **Build Fingerprint:** `{dinfo.get('build_fingerprint', 'N/A')}`")
+        report_lines.append(f"- **Kernel Version:** `{dinfo.get('kernel_version', 'N/A')}`")
+        report_lines.append(f"- **Device Serial Number:** `{dinfo.get('device_serial', 'N/A')}`")
+        report_lines.append(f"- **Acquisition Time (Device Time):** {dinfo.get('device_reported_time', dinfo.get('collection_time_utc', 'N/A'))}")
+
+    if data.get("inventory"):
         inv = data["inventory"]
-        report_lines.append(f"- **Device Serial:** `{inv.get('device_serial', 'N/A')}`")
-        report_lines.append(f"- **Inventory Timestamp:** {inv.get('inventory_time_utc', 'N/A')}")
+        if not data.get("device_info"):
+            report_lines.append(f"- **Device Serial:** `{inv.get('device_serial', 'N/A')}`")
         report_lines.append(f"- **Total Installed Packages:** {inv.get('total_apps', 0)}")
         report_lines.append(f"- **User / Third-Party Apps:** {inv.get('user_apps_count', 0)}")
         report_lines.append(f"- **System Apps:** {inv.get('system_apps_count', 0)}\n")
-    else:
+    elif not data.get("device_info"):
         report_lines.append("- *No live ADB device snapshot recorded for this case (Offline file analysis mode).*\n")
+    else:
+        report_lines.append("")
 
     # Section 4: Evidence Inventory
     report_lines.append("## 4. Evidence Inventory & Chain of Custody\n")
@@ -248,14 +292,36 @@ def generate_markdown_report(case_dir: Path, operator: Optional[str] = None) -> 
     else:
         report_lines.append("*No installed application inventory recorded.*\n")
 
-    # Section 7: Suspicious APK Metadata
-    report_lines.append("## 7. Suspicious APK Metadata\n")
+    # Section 7: Suspicious APK Metadata & Provenance
+    report_lines.append("## 7. Suspicious APK Metadata & Provenance\n")
     if data["apk_analysis"]:
         for apk in data["apk_analysis"]:
             m = apk.get("manifest", {})
             h = apk.get("hashes", {})
-            report_lines.append(f"### Application: `{m.get('package_name', 'Unknown')}`\n")
+            prov = apk.get("provenance", {})
+            pkg_name = m.get("package_name", "Unknown")
+
+            # Fallback to package_metadata from device_inventory if provenance missing
+            if pkg_name in data.get("package_metadata", {}):
+                dumpsys_meta = data["package_metadata"][pkg_name].get("dumpsys_metadata", {})
+                if prov.get("first_install_time") in ("Unknown", None) and dumpsys_meta.get("first_install_time"):
+                    prov["first_install_time"] = dumpsys_meta.get("first_install_time")
+                if prov.get("download_source") in ("Unknown", None) and dumpsys_meta.get("download_source"):
+                    prov["download_source"] = dumpsys_meta.get("download_source")
+
+            install_time = prov.get("first_install_time", "Unknown")
+            last_update = prov.get("last_update_time", "Unknown")
+            download_source = prov.get("download_source", "Unknown")
+            orig_uri = prov.get("originating_uri", "Unknown")
+
+            report_lines.append(f"### Application: `{pkg_name}`\n")
             report_lines.append(f"- **Application Label:** {m.get('application_label')}")
+            report_lines.append(f"- **Download Source / Provenance:** **{download_source}**")
+            if orig_uri and orig_uri != "Unknown":
+                report_lines.append(f"- **Originating Download URL / Link:** `{orig_uri}`")
+            report_lines.append(f"- **Installation Date / Timestamp:** {install_time}")
+            if last_update and last_update != "Unknown":
+                report_lines.append(f"- **Last Updated Timestamp:** {last_update}")
             report_lines.append(f"- **Version:** {m.get('version_name')} (versionCode: {m.get('version_code')})")
             report_lines.append(f"- **Target SDK:** {m.get('target_sdk')} (Min SDK: {m.get('min_sdk')})")
             report_lines.append(f"- **APK File Size:** {h.get('size_bytes')} bytes")
@@ -563,11 +629,24 @@ def generate_pdf_report(case_dir: Path, operator: Optional[str] = None) -> Tuple
 
     # Section 3: Device Details
     story.append(Paragraph("3. Device Details", h1_style))
-    story.append(Paragraph(f"• <b>Device Identifier:</b> {case_meta.get('device_identifier', 'Unknown')}", bullet_style))
-    if data["inventory"]:
+    dev_info = data.get("device_info") or {}
+    if dev_info:
+        mfr = dev_info.get("manufacturer", "")
+        model = dev_info.get("model", "")
+        aver = dev_info.get("android_version", "")
+        api = dev_info.get("api_level", "")
+        patch = dev_info.get("security_patch", "N/A")
+        serial = dev_info.get("device_serial", "N/A")
+        uptime = dev_info.get("uptime", "N/A")
+        story.append(Paragraph(f"• <b>Target Device:</b> {mfr} {model} (Android {aver}, API {api})", bullet_style))
+        story.append(Paragraph(f"• <b>Device Serial:</b> {serial} &nbsp;|&nbsp; <b>Security Patch:</b> {patch}", bullet_style))
+        story.append(Paragraph(f"• <b>Build Fingerprint:</b> <font size=7>{dev_info.get('build_fingerprint', 'N/A')}</font>", bullet_style))
+    else:
+        story.append(Paragraph(f"• <b>Device Identifier:</b> {case_meta.get('device_identifier', 'Unknown')}", bullet_style))
+
+    if data.get("inventory"):
         inv = data["inventory"]
-        story.append(Paragraph(f"• <b>ADB Serial:</b> {inv.get('device_serial', 'N/A')}", bullet_style))
-        story.append(Paragraph(f"• <b>Total Installed Packages:</b> {inv.get('total_apps', 0)} ({inv.get('user_apps_count', 0)} User, {inv.get('system_apps_count', 0)} System)", bullet_style))
+        story.append(Paragraph(f"• <b>Installed Package Inventory:</b> {inv.get('total_apps', 0)} total ({inv.get('user_apps_count', 0)} User apps, {inv.get('system_apps_count', 0)} System apps)", bullet_style))
     else:
         story.append(Paragraph("• <i>No live connected ADB device registered.</i>", bullet_style))
     story.append(Spacer(1, 8))
@@ -631,9 +710,30 @@ def generate_pdf_report(case_dir: Path, operator: Optional[str] = None) -> Tuple
         for apk in data["apk_analysis"]:
             m = apk.get("manifest", {})
             pa = apk.get("permissions_analysis", {})
-            story.append(Paragraph(f"<b>Package:</b> {m.get('package_name')} &nbsp;|&nbsp; <b>Label:</b> {m.get('application_label')}", h2_style))
+            prov = apk.get("provenance", {})
+            pkg_name = m.get("package_name", "Unknown")
+
+            # Fallback to package_metadata from device_inventory if provenance missing
+            if pkg_name in data.get("package_metadata", {}):
+                dumpsys_meta = data["package_metadata"][pkg_name].get("dumpsys_metadata", {})
+                if prov.get("first_install_time") in ("Unknown", None) and dumpsys_meta.get("first_install_time"):
+                    prov["first_install_time"] = dumpsys_meta.get("first_install_time")
+                if prov.get("download_source") in ("Unknown", None) and dumpsys_meta.get("download_source"):
+                    prov["download_source"] = dumpsys_meta.get("download_source")
+
+            install_time = prov.get("first_install_time", "Unknown")
+            download_source = prov.get("download_source", "Unknown")
+            orig_uri = prov.get("originating_uri", "Unknown")
+
+            story.append(Paragraph(f"<b>Package:</b> {pkg_name} &nbsp;|&nbsp; <b>Label:</b> {m.get('application_label')}", h2_style))
+            story.append(Paragraph(f"• <b>Download Source / Provenance:</b> <b>{download_source}</b>", bullet_style))
+            if orig_uri and orig_uri != "Unknown":
+                story.append(Paragraph(f"• <b>Originating Download URL:</b> <font size=7>{orig_uri}</font>", bullet_style))
+            story.append(Paragraph(f"• <b>Installation Date / Timestamp:</b> {install_time}", bullet_style))
+            story.append(Paragraph(f"• <b>Version:</b> {m.get('version_name')} (versionCode: {m.get('version_code')})", bullet_style))
             story.append(Paragraph(f"• <b>Threat Severity:</b> <font color='red'><b>{pa.get('overall_severity')}</b></font> (Risk Score: {pa.get('risk_score')}/100)", bullet_style))
             story.append(Paragraph(f"• <b>Target SDK:</b> {m.get('target_sdk')} (Min SDK: {m.get('min_sdk')})", bullet_style))
+            story.append(Paragraph(f"• <b>Total Declared Permissions:</b> {pa.get('total_declared', len(m.get('permissions', [])))}", bullet_style))
             story.append(Paragraph(f"• <b>Declared Capabilities:</b> {', '.join(pa.get('capabilities', ['None']))}", bullet_style))
 
             if pa.get("matched_threat_patterns"):

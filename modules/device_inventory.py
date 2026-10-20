@@ -222,6 +222,36 @@ def parse_dumpsys_package(dumpsys_output: str) -> Dict[str, Any]:
     if installer:
         data["installer_package"] = installer.group(1)
 
+    orig_uri = re.search(r"originatingUri=([^\s]+)", dumpsys_output) or re.search(r"originatingURI=([^\s]+)", dumpsys_output)
+    if orig_uri:
+        data["originating_uri"] = orig_uri.group(1)
+
+    ref_uri = re.search(r"referrerUri=([^\s]+)", dumpsys_output) or re.search(r"referrerURI=([^\s]+)", dumpsys_output)
+    if ref_uri:
+        data["referrer_uri"] = ref_uri.group(1)
+
+    init_pkg = re.search(r"initiatingPackageName=([^\s]+)", dumpsys_output) or re.search(r"installInitiator=([^\s]+)", dumpsys_output)
+    if init_pkg:
+        data["initiating_package"] = init_pkg.group(1)
+
+    # Classify download source
+    inst_pkg = data.get("installer_package", "Unknown")
+    orig = data.get("originating_uri", "Unknown")
+    if orig != "Unknown" and orig:
+        data["download_source"] = f"Direct Download Link (URL: {orig})"
+    elif inst_pkg == "com.android.vending":
+        data["download_source"] = "Google Play Store (com.android.vending)"
+    elif inst_pkg in ("com.google.android.packageinstaller", "com.android.packageinstaller"):
+        data["download_source"] = "Manual Sideload (Android Package Installer)"
+    elif inst_pkg == "com.android.shell":
+        data["download_source"] = "Direct ADB Sideload (Developer Bridge)"
+    elif "chrome" in inst_pkg or "browser" in inst_pkg:
+        data["download_source"] = f"Web Browser Download ({inst_pkg})"
+    elif inst_pkg != "Unknown":
+        data["download_source"] = f"App Store / Installer ({inst_pkg})"
+    else:
+        data["download_source"] = "Manual Sideload / Direct File Transfer"
+
     cpath = re.search(r"codePath=([^\s]+)", dumpsys_output)
     if cpath:
         data["code_path"] = cpath.group(1)
@@ -447,10 +477,28 @@ def pull_application_apk(
     # Clean up temp
     shutil.rmtree(temp_dir, ignore_errors=True)
 
+    # Also capture and store full dumpsys metadata (provenance, install timestamps, download source)
+    code_dumpsys, dumpsys_out, _ = run_adb_command(["shell", "dumpsys", "package", package_name], target_serial)
+    pkg_meta = parse_dumpsys_package(dumpsys_out) if code_dumpsys == 0 else {}
+    if pkg_meta:
+        meta_file = case_dir / "evidence" / "device_inventory" / f"package_meta_{package_name}.json"
+        meta_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            meta_file.write_text(json.dumps({
+                "package_name": package_name,
+                "device_serial": target_serial,
+                "device_source_path": device_apk_path,
+                "dumpsys_metadata": pkg_meta,
+                "collected_at_utc": datetime.now(timezone.utc).isoformat(),
+            }, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
     return {
         "status": "SUCCESS",
         "package_name": package_name,
         "device_source_path": device_apk_path,
         "preserved_evidence_path": str(preserved_path),
         "filename": preserved_path.name,
+        "dumpsys_metadata": pkg_meta,
     }

@@ -330,6 +330,7 @@ def log_case_action(case_dir: Path, action: str, details: str, operator: Optiona
 
     # Update log file
     audit_log = case_dir / "logs" / "case_audit.log"
+    audit_log.parent.mkdir(parents=True, exist_ok=True)
     with open(audit_log, "a", encoding="utf-8") as f:
         f.write(f"[{now_utc}] [{action}] {details} (Operator: {op})\n")
 
