@@ -93,8 +93,35 @@ C_GRAY = "\033[90m"
 
 
 def clear_screen() -> None:
-    """Clear terminal screen for clean layout."""
-    os.system("clear" if os.name != "nt" else "cls")
+    """Clear terminal screen and scrollback buffer for pristine presentation."""
+    sys.stdout.write("\033[2J\033[3J\033[H")
+    sys.stdout.flush()
+    if os.name == "nt":
+        os.system("cls")
+
+
+ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+
+
+def strip_ansi(s: str) -> str:
+    """Strip ANSI escape sequences from text for accurate length calculation."""
+    return ANSI_ESCAPE_RE.sub('', s)
+
+
+def visible_len(s: str) -> int:
+    """Return visible width of string ignoring ANSI color and formatting codes."""
+    return len(strip_ansi(s))
+
+
+def pad_ansi(s: str, width: int) -> str:
+    """Pad string containing ANSI escape codes to an exact visible character width."""
+    vis = visible_len(s)
+    if vis < width:
+        return s + (' ' * (width - vis))
+    elif vis > width:
+        plain = strip_ansi(s)
+        return plain[:max(0, width - 3)] + '...'
+    return s
 
 
 class ForensicSpinner:
@@ -164,7 +191,12 @@ def print_banner() -> None:
     """Render a polished forensic banner with real-time system and scan status badges."""
     active = get_active_case()
     case_name = active.name if active else "None (No Active Scan)"
-    case_path = str(active) if active else "Select or Create via Option [6]"
+    if active:
+        home_str = str(Path.home())
+        raw_path = str(active)
+        case_path = raw_path.replace(home_str, "~") if raw_path.startswith(home_str) else raw_path
+    else:
+        case_path = "Select or Create via Option [6]"
 
     # ML Classifier status
     repo_model_dir = Path(__file__).resolve().parent / "ml_model"
@@ -197,34 +229,57 @@ def print_banner() -> None:
         ai_status = f"{C_GRAY}OFFLINE (Optional Triage){C_RESET}"
 
     ascii_art = (
-        "    _             _           __  __       _ _   _       _   \n"
-        "   / \\   _ __   __| |_ __ ___|  \\/  | __ _| | | | |_   _| |_ \n"
-        "  / _ \\ | '_ \\ / _` | '__/ _ \\ |\\/| |/ _` | | |_| | | | | __|\n"
-        " / ___ \\| | | | (_| | | | (_) | |  | | (_| | |  _  | |_| | |_ \n"
-        "/_/   \\_\\_| |_|\\__,_|_|  \\___/|_|  |_|\\__,_|_|_| |_|\\__,_|\\__|"
+        r"    _             _           __  __       _ _   _       _   " + "\n" +
+        r"   / \   _ __   __| |_ __ ___|  \/  | __ _| | | | |_   _| |_ " + "\n" +
+        r"  / _ \ | '_ \ / _` | '__/ _ \ |\/| |/ _` | | |_| | | | | __|" + "\n" +
+        r" / ___ \| | | | (_| | | | (_) | |  | | (_| | |  _  | |_| | |_ " + "\n" +
+        r"/_/   \_\_| |_|\__,_|_|  \___/|_|  |_|\__,_|_|_| |_|\__,_|\__|"
     )
 
-    print(f"""
-{C_WHITE}{ascii_art}{C_RESET}
-  {C_WHITE}ANDROMALHUT{C_RESET} :: {C_CYAN}Android Malware Forensics & Incident Response v{TOOL_VERSION}{C_RESET}
-  {C_GRAY}Author: {AUTHOR} | GitHub: {REPO_URL}{C_RESET}
+    box_w = 78
+    inner_w = box_w - 4
 
-{C_CYAN}+-----------------------------------------------------------------------------+
-|                        LEGAL & COMPLIANCE NOTICE                            |
-+-----------------------------------------------------------------------------+
-|                                                                             |
-|   AndroMalHut is strictly intended for educational, academic research,      |
-|   and authorized defensive digital forensics and incident response.         |
-|                                                                             |
-|   Unauthorized acquisition, extraction, or compromise of mobile devices     |
-|   without explicit written owner permission is strictly prohibited.         |
-|                                                                             |
-+-----------------------------------------------------------------------------+
-| Active Scan : {C_GREEN if active else C_YELLOW}{case_name:<20}{C_RESET}{C_CYAN} | Folder: {C_GRAY}{case_path[:42]:<42}{C_RESET}{C_CYAN}|
-| ML Engine   : {ml_status:<62}|
-| Device ADB  : {adb_status:<62}|
-| AI Triage   : {ai_status:<62}|
-+-----------------------------------------------------------------------------+{C_RESET}""")
+    print(f"\n{C_CYAN}{ascii_art}{C_RESET}\n")
+    print(f"  {C_WHITE}{C_BOLD}ANDROMALHUT{C_RESET} :: {C_CYAN}Android Malware Forensics & Incident Response v{TOOL_VERSION}{C_RESET}")
+    print(f"  {C_GRAY}Author: {AUTHOR} | GitHub: {REPO_URL}{C_RESET}\n")
+
+    # Box 1: Compliance Notice
+    print(f"{C_CYAN}+" + ("-" * (box_w - 2)) + f"+{C_RESET}")
+    hdr_notice = "LEGAL & COMPLIANCE NOTICE"
+    pad_notice = (" " * ((inner_w - len(hdr_notice)) // 2)) + hdr_notice
+    print(f"{C_CYAN}| {pad_ansi(pad_notice, inner_w)} |{C_RESET}")
+    print(f"{C_CYAN}+" + ("-" * (box_w - 2)) + f"+{C_RESET}")
+    compliance_lines = [
+        "",
+        "  AndroMalHut is strictly intended for educational, academic research,",
+        "  and authorized defensive digital forensics and incident response.",
+        "",
+        "  Unauthorized acquisition, extraction, or compromise of mobile devices",
+        "  without explicit written owner permission is strictly prohibited.",
+        ""
+    ]
+    for cl in compliance_lines:
+        print(f"{C_CYAN}| {pad_ansi(cl, inner_w)} |{C_RESET}")
+    print(f"{C_CYAN}+" + ("-" * (box_w - 2)) + f"+{C_RESET}")
+
+    print()
+
+    # Box 2: Investigation & System Status
+    print(f"{C_CYAN}+" + ("-" * (box_w - 2)) + f"+{C_RESET}")
+    hdr_status = "INVESTIGATION & SYSTEM STATUS"
+    pad_status = (" " * ((inner_w - len(hdr_status)) // 2)) + hdr_status
+    print(f"{C_CYAN}| {pad_ansi(pad_status, inner_w)} |{C_RESET}")
+    print(f"{C_CYAN}+" + ("-" * (box_w - 2)) + f"+{C_RESET}")
+    status_lines = [
+        f"  Active Case : {C_GREEN if active else C_YELLOW}{case_name}{C_RESET}",
+        f"  Case Folder : {C_GRAY}{case_path}{C_RESET}",
+        f"  ML Engine   : {ml_status}",
+        f"  Device ADB  : {adb_status}",
+        f"  AI Triage   : {ai_status}"
+    ]
+    for sl in status_lines:
+        print(f"{C_CYAN}| {pad_ansi(sl, inner_w)} |{C_RESET}")
+    print(f"{C_CYAN}+" + ("-" * (box_w - 2)) + f"+{C_RESET}")
 
 
 def check_tool_dependencies() -> Dict[str, Dict[str, Any]]:
@@ -544,7 +599,7 @@ def run_interactive_menu() -> None:
         if not active or not active.exists():
             active = setup_case_workflow()
 
-        print(f"\n{C_BOLD}Forensic Investigation Workflows:{C_RESET}")
+        print(f"\n{C_WHITE}{C_BOLD}Forensic Investigation Workflows:{C_RESET}\n")
         menu_items = [
             ("1", "Static APK Forensics & ML", "Decompile, inspect manifest, permissions & ML triage"),
             ("2", "Connected Phone Scanner", "Device hardware details, full app inventory & APK pull"),
@@ -559,7 +614,7 @@ def run_interactive_menu() -> None:
 
         for num, title, desc in menu_items:
             num_badge = f"{C_CYAN}{C_BOLD}[{num}]{C_RESET}"
-            print(f"  {num_badge} {C_BOLD}{title:<30}{C_RESET} {C_GRAY}{desc}{C_RESET}")
+            print(f"  {num_badge}  {C_WHITE}{C_BOLD}{title:<30}{C_RESET}  {C_GRAY}{desc}{C_RESET}")
 
         try:
             choice = input(f"\n{C_BOLD}Select workflow [0-8]:{C_RESET} ").strip()
