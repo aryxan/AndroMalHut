@@ -310,10 +310,31 @@ def normalize_permission_name(perm: str) -> str:
     return perm.strip().split()[-1] if perm else ""
 
 
-def analyze_permissions(declared_permissions: List[str], granted_permissions: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Perform calibrated threat analysis of declared and granted permissions."""
+def analyze_permissions(
+    declared_permissions: List[str],
+    granted_permissions: Optional[List[str]] = None,
+    provenance: Optional[Dict[str, Any]] = None,
+    package_name: Optional[str] = None,
+    app_label: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Perform calibrated, context-aware threat analysis of declared and granted permissions."""
     declared_set = {normalize_permission_name(p) for p in declared_permissions if p}
     granted_set = {normalize_permission_name(p) for p in (granted_permissions or []) if p}
+
+    # Determine if package has verified Google Play Store origin
+    is_play_store = False
+    if provenance:
+        dl_source = str(provenance.get("download_source", "")).lower()
+        inst_pkg = str(provenance.get("installer_package", "")).lower()
+        if "play store" in dl_source or "com.android.vending" in dl_source or inst_pkg == "com.android.vending":
+            is_play_store = True
+
+    # Also detect Play Store billing / install referrer signatures if not explicitly sideloaded
+    if not is_play_store and provenance:
+        dl_source = str(provenance.get("download_source", "")).lower()
+        if "sideload" not in dl_source and "direct" not in dl_source:
+            if "com.android.vending.BILLING" in declared_set or "com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE" in declared_set:
+                is_play_store = True
 
     findings = []
     capabilities = set()
@@ -383,23 +404,54 @@ def analyze_permissions(declared_permissions: List[str], granted_permissions: Op
 
     # Evaluate combination rules
     matched_rules = []
+    has_critical_exploit_rule = False
+
     for rule in COMBINATION_RULES:
         req = rule["required_permissions"]
         if req.issubset(declared_set):
+            rule_name = rule["name"]
+
+            # Contextual calibration: SMS pattern on verified Play Store apps is standard OTP verification, not SMS Stealer
+            if rule_name == "SMS Stealer / OTP Interceptor Pattern" and is_play_store:
+                benign_rule = {
+                    "name": "Standard Banking / 2FA SMS Verification Capability",
+                    "required_permissions": sorted(list(req)),
+                    "severity": "LOW",
+                    "description": (
+                        "Requests SMS reception alongside boot persistence and network communication. "
+                        "In verified Google Play Store applications (such as official banking, UPI payment, and messaging apps), "
+                        "this pattern is standard for automated SMS OTP verification and NPCI/UPI SIM binding."
+                    ),
+                    "mitre_id": "T1412 (Standard Banking OTP Verification)",
+                }
+                matched_rules.append(benign_rule)
+                # For legitimate Play Store apps, add minimal operational weight instead of critical penalty
+                risk_score += 2
+                continue
+
             serializable_rule = dict(rule)
             serializable_rule["required_permissions"] = sorted(list(rule["required_permissions"]))
             matched_rules.append(serializable_rule)
             if rule["severity"] == "CRITICAL":
+                has_critical_exploit_rule = True
                 risk_score += 30
             elif rule["severity"] == "HIGH":
                 risk_score += 15
             elif rule["severity"] == "MEDIUM":
                 risk_score += 8
 
+    # Calibration for verified Play Store applications
+    # If the app is verified from Google Play Store and does not possess active trojan exploit combinations
+    # (such as accessibility hijacking or overlay phishing), cap its baseline risk score to normal operational levels.
+    if is_play_store and not has_critical_exploit_rule:
+        risk_score = min(risk_score, 18)
+
     risk_score = min(risk_score, max_possible_score)
 
     # Calibrated industry severity bands
-    if risk_score >= 75:
+    if is_play_store and not has_critical_exploit_rule:
+        overall_severity = "LOW"
+    elif risk_score >= 75:
         overall_severity = "CRITICAL"
     elif risk_score >= 50:
         overall_severity = "HIGH"
@@ -417,4 +469,11 @@ def analyze_permissions(declared_permissions: List[str], granted_permissions: Op
         "matched_threat_patterns": matched_rules,
         "categorized_permissions": categorized,
         "dangerous_count": len(categorized["critical"]) + len(categorized["high"]) + len(categorized["medium"]),
+        "is_play_store": is_play_store,
+        "provenance_note": (
+            "Verified Google Play Store Application (legitimate OTP/SIM binding permissions)"
+            if is_play_store
+            else "Standard / Untrusted Origin"
+        ),
     }
+

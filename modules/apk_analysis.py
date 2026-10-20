@@ -814,13 +814,7 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
     # Step 5: Android API & Code Pattern Analysis
     observed_patterns = inspect_apk_code_patterns(unique_strings)
 
-    # Step 6: Permission Analysis
-    perm_report = analyze_permissions(manifest.get("permissions", []))
-
-    # Step 7: Signing & Certificate Information
-    signing_info = extract_apk_signing_info(apk_path)
-
-    # Step 8: Provenance, Installation Timestamp & Download Origin
+    # Step 6: Provenance, Installation Timestamp & Download Origin
     case_context_dir = None
     if output_analysis_dir:
         # Check standard layout: case_dir / analysis / apk_analysis
@@ -828,6 +822,19 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
         if (candidate_case / "case.json").exists():
             case_context_dir = candidate_case
     provenance = detect_apk_provenance(apk_path, manifest, extracted_indicators, case_dir=case_context_dir)
+
+    # Step 7: Permission Analysis (Context & Provenance Aware)
+    pkg_name = manifest.get("package_name", "Unknown")
+    app_label = manifest.get("application_label") or pkg_name
+    perm_report = analyze_permissions(
+        manifest.get("permissions", []),
+        provenance=provenance,
+        package_name=pkg_name,
+        app_label=app_label,
+    )
+
+    # Step 8: Signing & Certificate Information
+    signing_info = extract_apk_signing_info(apk_path)
 
     # Step 9: Categorize findings into Facts, Indicators, and Hypotheses
     observed_facts = [
@@ -844,6 +851,8 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
         f"Total Declared Permissions: {len(manifest.get('permissions', []))}",
         f"Exported Components: {len(manifest.get('exported_components', []))}",
     ]
+
+    is_play_store = perm_report.get("is_play_store", False)
 
     suspicious_indicators = []
     if manifest.get("accessibility_services"):
@@ -865,17 +874,21 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
     behavioral_hypotheses = []
     if "Banking Trojan / Overlay Phishing Pattern" in [r["name"] for r in perm_report.get("matched_threat_patterns", [])]:
         behavioral_hypotheses.append(
-            "High likelihood of overlay credential phishing targeting banking, social, or cryptocurrency applications."
+            f"Package {pkg_name} ({app_label}): High likelihood of overlay credential phishing targeting banking, social, or cryptocurrency applications."
         )
     if "SMS Stealer / OTP Interceptor Pattern" in [r["name"] for r in perm_report.get("matched_threat_patterns", [])]:
         behavioral_hypotheses.append(
-            "Potential for unauthorized interception, redirection, or exfiltration of 2FA SMS tokens."
+            f"Package {pkg_name} ({app_label}): Sideloaded untrusted package exhibits potential for unauthorized interception, redirection, or exfiltration of 2FA SMS tokens."
         )
     has_dropper_perms = any(p in manifest.get("permissions", []) for p in ["android.permission.REQUEST_INSTALL_PACKAGES", "android.permission.INSTALL_PACKAGES"])
     has_payload_urls = any(any(ext in u.get("indicator", "").lower() for ext in [".apk", ".dex", ".jar", ".bin"]) for u in extracted_indicators.get("urls", []))
-    if observed_patterns.get("dynamic_code_loading") and (has_dropper_perms or has_payload_urls):
+    if observed_patterns.get("dynamic_code_loading") and (has_dropper_perms or has_payload_urls) and not is_play_store:
         behavioral_hypotheses.append(
-            "Capability to act as a secondary payload dropper or dynamically execute external binary modules."
+            f"Package {pkg_name} ({app_label}): Capability to act as a secondary payload dropper or dynamically execute external binary modules."
+        )
+    if is_play_store and not behavioral_hypotheses:
+        behavioral_hypotheses.append(
+            f"Package {pkg_name} ({app_label}): Verified Google Play Store package. Standard banking OTP / UPI verification permissions operating within legitimate application scope."
         )
 
     # Optional Decompilation with JADX / APKTool if output directory is provided and tools exist

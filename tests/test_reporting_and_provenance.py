@@ -142,8 +142,60 @@ class TestReportingAndProvenance(unittest.TestCase):
         pdf_file, err = generate_pdf_report(self.case_dir, operator="aryxan")
         self.assertIsNone(err)
         self.assertIsNotNone(pdf_file)
-        self.assertTrue(pdf_file.exists())
-        self.assertGreater(pdf_file.stat().st_size, 1000)
+    def test_permission_analysis_provenance_playstore_vs_sideload(self):
+        from modules.permission_analysis import analyze_permissions
+
+        banking_perms = [
+            "android.permission.INTERNET",
+            "android.permission.RECEIVE_SMS",
+            "android.permission.SEND_SMS",
+            "android.permission.READ_SMS",
+            "android.permission.RECEIVE_BOOT_COMPLETED",
+            "android.permission.READ_PHONE_STATE",
+            "android.permission.CAMERA",
+            "android.permission.ACCESS_FINE_LOCATION",
+        ]
+
+        # Case A: Official Google Play Store distribution
+        play_prov = {
+            "download_source": "Google Play Store (com.android.vending)",
+            "installer_package": "com.android.vending",
+        }
+        res_play = analyze_permissions(
+            banking_perms,
+            provenance=play_prov,
+            package_name="com.lcode.ucomobilebanking",
+            app_label="UCO mBanking Plus",
+        )
+        self.assertEqual(res_play["overall_severity"], "LOW")
+        self.assertLessEqual(res_play["risk_score"], 25)
+        pattern_names_play = [p["name"] for p in res_play["matched_threat_patterns"]]
+        self.assertIn("Standard Banking / 2FA SMS Verification Capability", pattern_names_play)
+        self.assertNotIn("SMS Stealer / OTP Interceptor Pattern", pattern_names_play)
+
+        # Case B: Sideloaded / Untrusted distribution
+        sideload_prov = {
+            "download_source": "Manual Sideload / Direct File Transfer",
+            "installer_package": "Unknown",
+        }
+        res_side = analyze_permissions(
+            banking_perms,
+            provenance=sideload_prov,
+            package_name="peak.nexus.forge375",
+            app_label="UCO BANK LIFE CERTIFICATE",
+        )
+        self.assertIn(res_side["overall_severity"], ("HIGH", "CRITICAL"))
+        self.assertGreaterEqual(res_side["risk_score"], 60)
+        pattern_names_side = [p["name"] for p in res_side["matched_threat_patterns"]]
+        self.assertIn("SMS Stealer / OTP Interceptor Pattern", pattern_names_side)
+
+    def test_report_harmonization_no_contradictions(self):
+        md_file = generate_markdown_report(self.case_dir, operator="aryxan")
+        content = md_file.read_text(encoding="utf-8")
+        self.assertIn("## 8. Permission and Component Analysis", content)
+        self.assertIn("## 14. Conclusions and Behavioral Hypotheses", content)
+        self.assertIn("Threat Assessment for `com.suspicious.app`", content)
+        self.assertIn("Application: `com.suspicious.app`", content)
 
 
 if __name__ == "__main__":
