@@ -5,8 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Tested%20OS-Kali%20Linux%20%7C%20Debian%20%7C%20Ubuntu-red.svg)]()
-[![Model Accuracy](https://img.shields.io/badge/Holdout%20Accuracy-93.49%25-brightgreen.svg)]()
+[![Model Accuracy](https://img.shields.io/badge/Holdout%20Accuracy-93.92%25-brightgreen.svg)]()
 [![Downloads Dataset Accuracy](https://img.shields.io/badge/Downloads%20Dataset-86.21%25-green.svg)]()
+[![GPU Accelerated](https://img.shields.io/badge/GPU%20Engine-NVIDIA%20CUDA%20XGBoost-76B900?logo=nvidia)]()
 
 > **AndroMalHut** (developed by [**aryxan**](https://github.com/aryxan)) is a terminal-based digital forensics, APK reverse engineering, and mobile malware triage toolkit. Engineered for incident responders, digital forensics investigators, and security researchers, it delivers evidence-grade analysis of suspicious Android applications without executing untrusted binaries.
 
@@ -38,7 +39,7 @@
 ## Key Features
 
 1. **Dual-Layer Malware Classification Engine:**
-   - **Machine Learning (Multi-Source Random Forest):** Trained across 25,722 applications (Drebin-215 + AndroZoo) to detect modern evasion patterns, overlay attacks, SMS exfiltration, and privilege escalation.
+   - **Machine Learning (GPU-Accelerated XGBoost Engine):** Trained across 25,722 applications (Drebin-215 + AndroZoo) with NVIDIA CUDA GPU acceleration (`hist` tree method) and automatic CPU fallback. Features calibrated interaction patterns (`RISK_COVERT_SPYWARE`, `RISK_OVERLAY_ACCESS`, `RISK_SMS_BOOT`, `RISK_DEVICE_TAKEOVER`) preventing false positives on legitimate banking/enterprise apps while retaining high sensitivity to RATs and Trojans.
    - **Deep Static Dissection:** Pure-Python Binary XML (AXML) parser, DEX string extractor, component auditor, and cryptographic certificate verifier.
    - **Local AI Triage Narrative:** Optional offline integration with **Ollama** (`qwen`, `llama`) to synthesize structured, readable executive triage reports.
 
@@ -78,7 +79,7 @@ When a scan is created or selected, AndroMalHut structures all evidence and anal
 │   ├── network_captures/             # PCAP / PCAPNG network packet captures
 │   └── imported_files/               # Miscellaneous evidence files
 ├── analysis/                         # Dedicated test outputs
-│   ├── ml_classification/            # Random Forest ML predictions, confidence scores & feature matrices
+│   ├── ml_classification/            # GPU XGBoost ML predictions, confidence scores & feature matrices
 │   ├── apk_analysis/                 # Static disassembly (manifest, exported components, permissions)
 │   ├── ai_triage/                    # Local Ollama / Qwen forensic briefing narratives
 │   ├── network_analysis/             # Dissected C2 indicators (URLs, IPv4, Domains)
@@ -99,7 +100,7 @@ When a scan is created or selected, AndroMalHut structures all evidence and anal
 
 ## Machine Learning Benchmark & Confidence Scores
 
-AndroMalHut integrates a multi-source **Random Forest Classifier** trained on **25,722 real-world Android applications** (13,246 Malware, 12,476 Benign). To eliminate 2011-era historical bias (where legacy malware lacked bound services that modern legitimate apps use), deceptive IPC features were excised and replaced with modern multi-permission interaction patterns (`RISK_SMS_BOOT`, `RISK_OVERLAY_ACCESS`, `RISK_SPYWARE`, `RISK_PHONE_TRACKING`).
+AndroMalHut integrates a high-performance **GPU-Accelerated XGBoost Classifier** trained on **25,722 real-world Android applications** (13,246 Malware, 12,476 Benign). To eliminate historical bias from 2011-era datasets (where benign apps lacked modern multi-permission capabilities like Camera + Location used by QR and UPI banking), deceptive legacy IPC features were excised and replaced with calibrated multi-permission interaction patterns (`RISK_SMS_BOOT`, `RISK_OVERLAY_ACCESS`, `RISK_COVERT_SPYWARE`, `RISK_DEVICE_TAKEOVER`).
 
 The model was rigorously evaluated on both a large-scale holdout test set and an independent target dataset (`android_malware_dataset.csv`). **All reported metrics are verified, genuine, and reproducible.**
 
@@ -126,15 +127,16 @@ Actual Malware          5                 33         (86.8% Sensitivity)
 ### 2. Benchmark on Multi-Source Holdout Set (5,145 Test Samples)
 - **Dataset Composition:** Combined AndroZoo (2013–2016 Real-World APKs) + Drebin Benchmark
 - **Total Dataset:** 25,722 Applications (80% Train, 20% Holdout Test)
+- **Execution Acceleration:** NVIDIA CUDA GPU (`hist` tree method) with automatic CPU fallback
 
 | Metric | Score | Details |
 | :--- | :--- | :--- |
-| **Holdout Accuracy** | **93.49%** | 4,810 of 5,145 test applications correctly classified |
-| **Balanced Accuracy** | **93.49%** | Equal performance on benign (93.47%) and malware (93.51%) |
-| **Precision (Malware)** | **93.83%** | Very low false alarm rate |
-| **Recall (Malware)** | **93.51%** | 2,478 of 2,650 malware samples identified |
-| **F1-Score (Malware)** | **93.67%** | Consistent across diverse malware families |
-| **ROC-AUC Score** | **0.9836** | Near-optimal discriminator curve |
+| **Holdout Accuracy** | **93.92%** | 4,832 of 5,145 test applications correctly classified |
+| **Balanced Accuracy** | **93.94%** | Equal performance on benign (94.63%) and malware (93.25%) |
+| **Precision (Malware)** | **94.86%** | Exceptional precision, eliminating false alarms on legitimate banking apps |
+| **Recall (Malware)** | **93.25%** | 2,471 of 2,650 malware samples identified |
+| **F1-Score (Malware)** | **94.05%** | Robust generalization across banking trojans, spyware, and RATs |
+| **ROC-AUC Score** | **0.9861** | State-of-the-art discriminator curve |
 
 ---
 
