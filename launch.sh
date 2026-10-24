@@ -20,10 +20,8 @@ fi
 # 2. Check for entry point
 if [[ -f "${SCRIPT_DIR}/andromalhut.py" ]]; then
     MAIN_SCRIPT="${SCRIPT_DIR}/andromalhut.py"
-elif [[ -f "${SCRIPT_DIR}/droidsleuth.py" ]]; then
-    MAIN_SCRIPT="${SCRIPT_DIR}/droidsleuth.py"
 else
-    echo -e "\033[31m[ERROR] Main entry script not found in ${SCRIPT_DIR}\033[0m" >&2
+    echo -e "\033[31m[ERROR] Main entry script (andromalhut.py) not found in ${SCRIPT_DIR}\033[0m" >&2
     exit 1
 fi
 
@@ -38,5 +36,5 @@ for venv_dir in "${SCRIPT_DIR}/.venv" "${SCRIPT_DIR}/venv" "${SCRIPT_DIR}/env"; 
     fi
 done
 
-# 4. Execute droidsleuth.py with all passed arguments or open interactive menu
+# 4. Execute andromalhut.py with all passed arguments or open interactive menu
 exec python3 "${MAIN_SCRIPT}" "$@"

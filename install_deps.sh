@@ -120,12 +120,12 @@ fi
 echo -e "\n--------------------------------------------------------------------"
 if [[ ${MISSING_CORE} -eq 0 && ${MISSING_OPTIONAL} -eq 0 ]]; then
     echo -e "${C_GREEN}${C_BOLD}[✓] All recommended forensic tools and libraries are present!${C_RESET}"
-    echo -e "You can launch DroidSleuth immediately via: ${C_BOLD}./launch.sh${C_RESET}"
+    echo -e "You can launch AndroMalHut immediately via: ${C_BOLD}./launch.sh${C_RESET}"
     exit 0
 fi
 
 echo -e "${C_YELLOW}${C_BOLD}[i] Audit Summary: ${MISSING_CORE} required missing, ${MISSING_OPTIONAL} optional tools missing.${C_RESET}"
-echo -e "Note: DroidSleuth includes internal pure-Python parsers for AXML, DEX, and network indicators,"
+echo -e "Note: AndroMalHut includes internal pure-Python parsers for AXML, DEX, and network indicators,"
 echo -e "so it remains fully operational even without all external reverse engineering tools.\n"
 
 if [[ ${#DEB_PACKAGES[@]} -gt 0 ]]; then
@@ -150,6 +150,6 @@ if [[ -t 0 ]]; then
         pip install --upgrade pip
         pip install -r "${SCRIPT_DIR}/requirements.txt"
         echo -e "${C_GREEN}[+] Virtual environment successfully configured!${C_RESET}"
-        echo -e "Run ${C_BOLD}./launch.sh${C_RESET} to start DroidSleuth."
+        echo -e "Run ${C_BOLD}./launch.sh${C_RESET} to start AndroMalHut."
     fi
 fi

@@ -1,0 +1,41 @@
+AndroMalHut
+Copyright (c) 2026 aryxan (https://github.com/aryxan/AndroMalHut)
+
+This product includes software and research datasets developed by third parties:
+
+1. Drebin Dataset & Feature Extraction Methodology
+   - Authors: Daniel Arp, Michael Spreitzenbarth, Malte Huebner, Hugo Gascon, Konrad Rieck
+   - Publication: "DREBIN: Effective and Explainable Detection of Android Malware in Your Pocket",
+     Network and Distributed System Security Symposium (NDSS), 2014.
+   - Reference: https://www.sec.cs.tu-bs.de/~danarp/drebin/
+
+2. AndroZoo Research Repository
+   - Authors: Kevin Allix, Tegawendé F. Bissyandé, Jacques Klein, Yves Le Traon
+   - Publication: "AndroZoo: Collected Mobile Applications for tube-feeding Android Analysis Tools",
+     Proceedings of the 13th International Conference on Mining Software Repositories (MSR), 2016.
+   - Reference: https://androzoo.uni.lu/
+
+3. Androguard
+   - Copyright (c) 2012-2024 Anthony Desnos, Geoffroy Gueguen
+   - License: Apache License 2.0
+   - Reference: https://github.com/androguard/androguard
+
+4. XGBoost
+   - Copyright (c) 2015-2024 Distributed Machine Learning Community (DMLC)
+   - License: Apache License 2.0
+   - Reference: https://github.com/dmlc/xgboost
+
+5. ReportLab
+   - Copyright (c) 2000-2024 ReportLab Inc.
+   - License: BSD License
+   - Reference: https://www.reportlab.com/
+
+6. Scikit-learn
+   - Copyright (c) 2007-2024 scikit-learn developers
+   - License: BSD 3-Clause License
+   - Reference: https://scikit-learn.org/
+
+7. Cryptography (pyca/cryptography)
+   - Copyright (c) Individual contributors
+   - License: Apache License 2.0 / BSD 3-Clause
+   - Reference: https://cryptography.io/

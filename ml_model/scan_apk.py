@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AScanner Hybrid Android APK Static Inspector & Malware Classifier
-Uses a multi-source machine learning model trained on 25,722 applications
+AndroMalHut Hybrid Android APK Static Inspector & Malware Classifier
+Uses a multi-source machine learning model trained on benchmark applications
 (AndroZoo + Drebin datasets) alongside static forensic indicator extraction.
 """
 

@@ -37,6 +37,8 @@ from modules.device_inventory import (
     inspect_package,
     pull_application_apk,
     is_adb_installed,
+    validate_package_name,
+    validate_apk_path,
 )
 from modules.apk_analysis import (
     analyze_apk,
@@ -1516,7 +1518,12 @@ def main() -> None:
             sys.exit(1)
 
     elif cmd == "inspect-app":
-        res = inspect_package(args.package, serial=args.device_serial)
+        try:
+            pkg_name = validate_package_name(args.package)
+        except ValueError as e:
+            print(f"[!] Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        res = inspect_package(pkg_name, serial=args.device_serial)
         if res.get("status") == "SUCCESS":
             print(f"[+] Package: {res['package_name']}")
             print(f"    Classification: {'System' if res['is_system_app'] else 'Third-Party'}")
@@ -1526,7 +1533,7 @@ def main() -> None:
             print(f"    Install Time: {meta.get('first_install_time')}")
             print(f"    Requested Perms ({len(meta.get('requested_permissions', []))}): {', '.join(meta.get('requested_permissions', [])[:5])}...")
             if getattr(args, "online", False):
-                online_res = verify_package_online(args.package, online=True)
+                online_res = verify_package_online(pkg_name, online=True)
                 print(f"    Identity Trust: {online_res.get('threat_reputation')}")
                 print(f"    Catalog Source: {online_res.get('verified_source')}")
         else:
@@ -1534,7 +1541,12 @@ def main() -> None:
             sys.exit(1)
 
     elif cmd == "pull-apk":
-        res = pull_application_apk(args.package, case_dir, serial=args.device_serial)
+        try:
+            pkg_name = validate_package_name(args.package)
+        except ValueError as e:
+            print(f"[!] Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        res = pull_application_apk(pkg_name, case_dir, serial=args.device_serial)
         if res.get("status") == "SUCCESS":
             print(f"[+] Pulled APK to evidence: {res['preserved_evidence_path']}")
         else:
@@ -1542,9 +1554,10 @@ def main() -> None:
             sys.exit(1)
 
     elif cmd == "analyze-apk":
-        src_path = Path(args.apk_path)
-        if not src_path.exists():
-            print(f"[!] File not found: {src_path}", file=sys.stderr)
+        try:
+            src_path = validate_apk_path(args.apk_path)
+        except (ValueError, FileNotFoundError) as e:
+            print(f"[!] Error: {e}", file=sys.stderr)
             sys.exit(1)
         preserved = record_evidence_file(
             case_dir=case_dir,

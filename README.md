@@ -462,6 +462,12 @@ python3 -m unittest discover tests
 - **Author & Maintainer:** [**aryxan**](https://github.com/aryxan)
 - **Repository:** [https://github.com/aryxan/AndroMalHut](https://github.com/aryxan/AndroMalHut)
 - **License:** Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for complete terms.
+- **Third-Party Credits & Notice:** See [`NOTICE`](NOTICE) for full citations and licenses of external projects:
+  - **Drebin Dataset:** Arp et al., NDSS 2014.
+  - **AndroZoo Dataset:** Allix et al., MSR 2016.
+  - **Androguard:** Anthony Desnos & contributors (Apache 2.0).
+  - **XGBoost:** DMLC (Apache 2.0).
+  - **ReportLab:** ReportLab Inc. (BSD).
 
 ```text
 DISCLAIMER: AndroMalHut is an educational and defensive forensic toolkit.

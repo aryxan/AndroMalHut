@@ -15,7 +15,15 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
 from modules.case_manager import record_evidence_file, log_case_action
-from modules.device_inventory import is_adb_installed, list_connected_devices, select_device, run_adb_command
+from modules.device_inventory import (
+    is_adb_installed,
+    list_connected_devices,
+    select_device,
+    run_adb_command,
+    is_valid_package_name,
+    validate_package_name,
+    validate_apk_path,
+)
 
 
 def check_dynamic_environment() -> Dict[str, Any]:
@@ -173,6 +181,20 @@ def run_dynamic_sandbox(
                 "is_emulator": False,
             }
 
+    # Validate APK path if supplied
+    if apk_p:
+        try:
+            apk_p = validate_apk_path(apk_p)
+        except (ValueError, FileNotFoundError) as e:
+            return {"status": "ERROR", "reason": str(e), "error": str(e)}
+
+    # Validate package name if supplied
+    if pkg:
+        try:
+            pkg = validate_package_name(pkg)
+        except ValueError as e:
+            return {"status": "ERROR", "reason": str(e), "error": str(e)}
+
     # Derive package name if omitted
     if not pkg and apk_p and apk_p.exists():
         try:
@@ -180,10 +202,14 @@ def run_dynamic_sandbox(
             m = parse_apk_manifest(apk_p)
             pkg = m.get("package_name")
         except Exception:
-            pkg = apk_p.stem
+            pkg = None
 
-    if not pkg or pkg == "Unknown":
-        pkg = apk_p.stem if apk_p else "unknown_package"
+    if not pkg or not is_valid_package_name(pkg):
+        return {
+            "status": "ERROR",
+            "reason": f"A valid Android package name could not be determined for dynamic analysis: {pkg!r}",
+            "error": f"Invalid package name: {pkg!r}",
+        }
 
     screenshots: List[str] = []
     dynamic_dir = case_dir / "analysis" / "dynamic_analysis"

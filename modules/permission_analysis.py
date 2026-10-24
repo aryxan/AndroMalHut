@@ -518,7 +518,7 @@ def analyze_permissions(
     else:
         overall_severity = "LOW"
 
-    # Explicit hackathon classification into Normal, Dangerous, and Suspicious
+    # Explicit forensic classification into Normal, Dangerous, and Suspicious
     normal_perms: List[str] = []
     dangerous_perms: List[str] = []
     suspicious_perms: List[str] = []

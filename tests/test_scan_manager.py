@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit tests for AScanner scan management, test subfolder creation, and existing scan handling.
+Unit tests for AndroMalHut scan management, test subfolder creation, and existing scan handling.
 """
 
 import shutil
@@ -20,12 +20,12 @@ from modules.case_manager import (
     set_active_case,
     get_active_case,
 )
-from droidsleuth import run_ml_classifier
+from andromalhut import run_ml_classifier
 
 
 class TestScanManager(unittest.TestCase):
     def setUp(self):
-        self.test_dir = Path(tempfile.mkdtemp(prefix="ascanner_test_"))
+        self.test_dir = Path(tempfile.mkdtemp(prefix="andromalhut_test_"))
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
