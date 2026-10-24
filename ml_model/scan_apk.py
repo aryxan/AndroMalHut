@@ -317,16 +317,13 @@ def main():
     prob_malware = float(probabilities[1])
     prob_benign = float(probabilities[0])
 
-    # High-consequence threat attack pattern indicators
-    has_critical_threat = bool(row.get('RISK_COVERT_SPYWARE') or row.get('RISK_OVERLAY_ACCESS') or row.get('RISK_DEVICE_TAKEOVER'))
-
-    # Calibrated forensic verdict based on ML probability distribution and attack patterns
-    if prob_malware >= 0.65 or (not is_play_store and has_critical_threat and prob_malware >= 0.35):
+    # Dynamic verdict determined purely by model probability distribution
+    if prob_malware >= 0.65:
         verdict = "MALICIOUS"
         classification = "MALWARE"
-    elif prob_malware >= 0.50 or (not is_play_store and has_critical_threat):
+    elif prob_malware >= 0.50:
         verdict = "SUSPICIOUS"
-        classification = "SUSPICIOUS"
+        classification = "MALWARE"
     else:
         verdict = "BENIGN"
         classification = "BENIGN"
@@ -363,8 +360,8 @@ def main():
 
     evidence_quality = "HIGH" if data["parsing_status"] == "SUCCESS" else "MODERATE"
     reason = (
-        f"Multi-source ML model ({gpu_device_label}) predicts {prob_malware:.1%} probability of maliciousness "
-        f"based on {len(active_indicators)} matched capability features across 25,722 training samples."
+        f"Multi-source ML model ({gpu_device_label}) predicts {prob_malware:.1%} malware probability "
+        f"based on {len(active_indicators)} matched capability features across 27,722 training samples."
     )
 
     limitations = [

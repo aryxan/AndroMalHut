@@ -1,21 +1,21 @@
 AScanner Multi-Source Android Malware Classifier Evaluation
 ==========================================================
-Datasets: AndroZoo (10,686) + Drebin (15,036) -> Total 25722 samples
+Datasets: AndroZoo (10,686) + Drebin (15,036) + Modern Real-World Droppers & Utils -> Total 25962 samples
 Engine: XGBoost on NVIDIA GeForce RTX 5050 Laptop GPU (CUDA)
-Features: 630
-Accuracy: 0.9392
-Balanced Accuracy: 0.9394
-ROC-AUC: 0.9861
+Features: 634
+Accuracy: 0.9332
+Balanced Accuracy: 0.9332
+ROC-AUC: 0.9823
 
 Confusion Matrix (Actual Rows, Predicted Cols):
-  [Benign:   2361 | False Pos:   134]
-  [False Neg:  179 | Malware:    2471]
+  [Benign:   2356 | False Pos:   163]
+  [False Neg:  184 | Malware:    2490]
 
               precision    recall  f1-score   support
 
-      Benign       0.93      0.95      0.94      2495
-     Malware       0.95      0.93      0.94      2650
+      Benign       0.93      0.94      0.93      2519
+     Malware       0.94      0.93      0.93      2674
 
-    accuracy                           0.94      5145
-   macro avg       0.94      0.94      0.94      5145
-weighted avg       0.94      0.94      0.94      5145
+    accuracy                           0.93      5193
+   macro avg       0.93      0.93      0.93      5193
+weighted avg       0.93      0.93      0.93      5193

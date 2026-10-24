@@ -81,7 +81,7 @@ sns.heatmap(
     ax=ax
 )
 
-ax.set_title("AndroMalHut XGBoost Classifier — Confusion Matrix\n(Holdout Set: 5,145 Real-World Applications)", fontsize=13, weight="bold", pad=15, color="#0D47A1")
+ax.set_title(f"AndroMalHut XGBoost Classifier — Confusion Matrix\n(Holdout Set: {total_samples:,} Real-World Applications)", fontsize=13, weight="bold", pad=15, color="#0D47A1")
 ax.set_xlabel("Predicted Class", fontsize=11, weight="bold", labelpad=10)
 ax.set_ylabel("Actual Class (Ground Truth)", fontsize=11, weight="bold", labelpad=10)
 
@@ -117,10 +117,13 @@ malware_scores = [
 x = np.arange(len(metrics_names))
 width = 0.35
 
-rects1 = ax.bar(x - width/2, benign_scores, width, label="Benign Class (2,495 APKs)", color="#1976D2", edgecolor="#0D47A1", alpha=0.9)
-rects2 = ax.bar(x + width/2, malware_scores, width, label="Malware Class (2,650 APKs)", color="#D32F2F", edgecolor="#B71C1C", alpha=0.9)
+benign_n = int(cm[0].sum())
+malware_n = int(cm[1].sum())
 
-ax.set_title("Classification Performance by Class on 5,145 Holdout APKs", fontsize=13, weight="bold", pad=15, color="#1A2530")
+rects1 = ax.bar(x - width/2, benign_scores, width, label=f"Benign Class ({benign_n:,} APKs)", color="#1976D2", edgecolor="#0D47A1", alpha=0.9)
+rects2 = ax.bar(x + width/2, malware_scores, width, label=f"Malware Class ({malware_n:,} APKs)", color="#D32F2F", edgecolor="#B71C1C", alpha=0.9)
+
+ax.set_title(f"Classification Performance by Class on {total_samples:,} Holdout APKs", fontsize=13, weight="bold", pad=15, color="#1A2530")
 ax.set_ylabel("Score (%)", fontsize=11, weight="bold")
 ax.set_xticks(x)
 ax.set_xticklabels(metrics_names, fontsize=11, weight="bold")
@@ -171,7 +174,7 @@ ax.set_xlim([-0.02, 1.02])
 ax.set_ylim([-0.02, 1.02])
 ax.set_xlabel("False Positive Rate (1 - Specificity)", fontsize=11, weight="bold")
 ax.set_ylabel("True Positive Rate (Sensitivity / Recall)", fontsize=11, weight="bold")
-ax.set_title("Receiver Operating Characteristic (ROC) Curve\nModel Discriminative Power (AUC = 0.9861)", fontsize=13, weight="bold", pad=15, color="#0D47A1")
+ax.set_title(f"Receiver Operating Characteristic (ROC) Curve\nModel Discriminative Power (AUC = {eval_data['roc_auc']:.4f})", fontsize=13, weight="bold", pad=15, color="#0D47A1")
 ax.legend(loc="lower right", frameon=True, facecolor="#F8F9FA", edgecolor="#CCCCCC", fontsize=9.5)
 
 plt.tight_layout()
@@ -216,7 +219,7 @@ plt.close()
 # -------------------------------------------------------------------------
 print("[*] Generating 2x2 Composite Summary Dashboard...")
 fig, axs = plt.subplots(2, 2, figsize=(16, 13), dpi=300)
-fig.suptitle("AndroMalHut GPU-Accelerated XGBoost Model Evaluation\nTrained on 25,722 Applications (AndroZoo & Drebin Benchmarks)", fontsize=16, weight="bold", y=0.98, color="#0D47A1")
+fig.suptitle(f"AndroMalHut GPU-Accelerated XGBoost Model Evaluation\nTrained on {eval_data['total_samples']:,} Applications (AndroZoo & Drebin Benchmarks)", fontsize=16, weight="bold", y=0.98, color="#0D47A1")
 
 # Subplot 1: Confusion Matrix
 sns.heatmap(
@@ -232,13 +235,13 @@ sns.heatmap(
     annot_kws={"size": 10, "weight": "bold"},
     ax=axs[0, 0]
 )
-axs[0, 0].set_title("A. Confusion Matrix (Holdout n=5,145)", fontsize=12, weight="bold", pad=10)
+axs[0, 0].set_title(f"A. Confusion Matrix (Holdout n={total_samples:,})", fontsize=12, weight="bold", pad=10)
 axs[0, 0].set_xlabel("Predicted Class", fontsize=10, weight="bold")
 axs[0, 0].set_ylabel("Actual Class", fontsize=10, weight="bold")
 
 # Subplot 2: Metrics Bar Chart
-r1 = axs[0, 1].bar(x - width/2, benign_scores, width, label="Benign (n=2,495)", color="#1976D2", alpha=0.9)
-r2 = axs[0, 1].bar(x + width/2, malware_scores, width, label="Malware (n=2,650)", color="#D32F2F", alpha=0.9)
+r1 = axs[0, 1].bar(x - width/2, benign_scores, width, label=f"Benign (n={benign_n:,})", color="#1976D2", alpha=0.9)
+r2 = axs[0, 1].bar(x + width/2, malware_scores, width, label=f"Malware (n={malware_n:,})", color="#D32F2F", alpha=0.9)
 axs[0, 1].set_title("B. Classification Metrics by Category", fontsize=12, weight="bold", pad=10)
 axs[0, 1].set_ylabel("Score (%)", fontsize=10, weight="bold")
 axs[0, 1].set_xticks(x)
@@ -285,7 +288,7 @@ fig_plotly = make_subplots(
     subplot_titles=(
         "<b>A. Interactive Confusion Matrix</b>",
         "<b>B. Precision, Recall & F1-Score Comparison</b>",
-        "<b>C. ROC Curve (AUC = 0.9861)</b>",
+        f"<b>C. ROC Curve (AUC = {eval_data['roc_auc']:.4f})</b>",
         "<b>D. Top 15 Detection Feature Importances</b>"
     ),
     vertical_spacing=0.12,
@@ -294,8 +297,8 @@ fig_plotly = make_subplots(
 
 # 1. Confusion Matrix Heatmap
 cm_text = [
-    [f"True Benign: {cm[0,0]} (45.9%)", f"False Positive: {cm[0,1]} (2.6%)"],
-    [f"False Negative: {cm[1,0]} (3.5%)", f"True Malware: {cm[1,1]} (48.0%)"]
+    [f"True Benign: {cm[0,0]} ({cm[0,0]/total_samples:.1%})", f"False Positive: {cm[0,1]} ({cm[0,1]/total_samples:.1%})"],
+    [f"False Negative: {cm[1,0]} ({cm[1,0]/total_samples:.1%})", f"True Malware: {cm[1,1]} ({cm[1,1]/total_samples:.1%})"]
 ]
 fig_plotly.add_trace(
     go.Heatmap(
@@ -371,7 +374,7 @@ fig_plotly.add_trace(
 )
 
 fig_plotly.update_layout(
-    title_text="<b>AndroMalHut Interactive Machine Learning Model Evaluation Dashboard</b><br><sup>Trained on 25,722 Applications (AndroZoo & Drebin Benchmark) | Overall Accuracy: 93.92% | ROC-AUC: 0.9861</sup>",
+    title_text=f"<b>AndroMalHut Interactive Machine Learning Model Evaluation Dashboard</b><br><sup>Trained on {eval_data['total_samples']:,} Applications (AndroZoo & Drebin Benchmark) | Overall Accuracy: {eval_data['accuracy']:.2%} | ROC-AUC: {eval_data['roc_auc']:.4f}</sup>",
     title_x=0.5,
     height=850,
     width=1150,

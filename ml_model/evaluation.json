@@ -1,50 +1,50 @@
 {
   "datasets": [
-    "Datasets/AndroZoo/Permission_DATASET.csv",
-    "Datasets/Drebin/drebin-215.csv"
+    "/home/mrrobot/Android-Forensics/Datasets/AndroZoo/Permission_DATASET.csv",
+    "/home/mrrobot/Android-Forensics/Datasets/Drebin/drebin-215.csv"
   ],
-  "total_samples": 25722,
-  "malware_samples": 13246,
-  "benign_samples": 12476,
-  "features_count": 630,
-  "accuracy": 0.9391642371234208,
-  "balanced_accuracy": 0.93937270767951,
-  "roc_auc": 0.9861150224978259,
+  "total_samples": 25962,
+  "malware_samples": 13369,
+  "benign_samples": 12593,
+  "features_count": 634,
+  "accuracy": 0.9331792797997304,
+  "balanced_accuracy": 0.9332405060359518,
+  "roc_auc": 0.982258916007973,
   "confusion_matrix": [
     [
-      2361,
-      134
+      2356,
+      163
     ],
     [
-      179,
-      2471
+      184,
+      2490
     ]
   ],
   "classification_report": {
     "Benign": {
-      "precision": 0.9295275590551181,
-      "recall": 0.9462925851703406,
-      "f1-score": 0.9378351539225422,
-      "support": 2495.0
+      "precision": 0.9275590551181102,
+      "recall": 0.9352917824533545,
+      "f1-score": 0.9314093694406009,
+      "support": 2519.0
     },
     "Malware": {
-      "precision": 0.9485604606525911,
-      "recall": 0.9324528301886792,
-      "f1-score": 0.9404376784015224,
-      "support": 2650.0
+      "precision": 0.9385601206181681,
+      "recall": 0.931189229618549,
+      "f1-score": 0.9348601464238784,
+      "support": 2674.0
     },
-    "accuracy": 0.9391642371234208,
+    "accuracy": 0.9331792797997304,
     "macro avg": {
-      "precision": 0.9390440098538546,
-      "recall": 0.93937270767951,
-      "f1-score": 0.9391364161620324,
-      "support": 5145.0
+      "precision": 0.9330595878681391,
+      "recall": 0.9332405060359518,
+      "f1-score": 0.9331347579322397,
+      "support": 5193.0
     },
     "weighted avg": {
-      "precision": 0.9393307056505124,
-      "recall": 0.9391642371234208,
-      "f1-score": 0.9391756184258071,
-      "support": 5145.0
+      "precision": 0.9332237670663396,
+      "recall": 0.9331792797997304,
+      "f1-score": 0.9331862571073223,
+      "support": 5193.0
     }
   },
   "feature_names": [
@@ -402,6 +402,7 @@
     "DOWNLOAD_NOTIFICATION",
     "DOWNLOAD_WITHOUT_NOTIFICATION",
     "DUMP",
+    "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
     "EXPAND_STATUS_BAR",
     "FACTORY_TEST",
     "FILESYSTEMS",
@@ -414,6 +415,7 @@
     "FLASHLIGHT",
     "FORCE_BACK",
     "FORCE_STOP_PACKAGES",
+    "FOREGROUND_SERVICE",
     "FULLSCREEN",
     "GETBINDER",
     "GETCALLINGPID",
@@ -515,6 +517,7 @@
     "ORG.SIMALLIANCE.OPENMOBILEAPI.SMARTCARD",
     "ORG.THIALFIHAR.ANDROID.APG.PERMISSION.READ_KEY_DETAILS",
     "ORG.THOUGHTCRIME.SECURESMS.ACCESS_SECRETS",
+    "OVERRIDE_PACKAGE_VERIFICATION",
     "PACKAGEINSTALLER",
     "PACKAGE_USAGE_STATS",
     "PATHCLASSLOADER",
@@ -522,6 +525,7 @@
     "PERSISTENT_ACTIVITY",
     "PIONEER.PERMISSION.APPRADIO.ADVANCED_APPMODE",
     "PLUGIN.FORTUMO.PAYMENT_BROADCAST_PERMISSION",
+    "POST_NOTIFICATIONS",
     "PREVENT_POWER_KEY",
     "PROCESS.START",
     "PROCESSBUILDER",

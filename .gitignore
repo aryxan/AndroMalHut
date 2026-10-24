@@ -49,3 +49,7 @@ ml_model/reports/
 
 # Test temporary artifacts
 tests/tmp/
+
+# Local analysis & evaluation data
+analysis/
+*hackathon*
