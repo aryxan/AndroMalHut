@@ -13,7 +13,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
-from modules.case_manager import log_case_action
+from modules.case_manager import log_case_action, verify_case_hashes
 from modules.online_verifier import resolve_friendly_app_name
 
 try:
@@ -734,6 +734,8 @@ def generate_markdown_report(case_dir: Path, operator: Optional[str] = None) -> 
     report_lines.append("## 10. Dynamic Behavior Analysis & Runtime Screenshots\n")
     dyn_reports = data.get("dynamic_analysis", [])
     if dyn_reports:
+        dyn_devs = ", ".join(sorted(set(str(dr.get("device_serial", "device")) for dr in dyn_reports)))
+        report_lines.append(f"**Execution Status:** Dynamic analysis was performed on `{dyn_devs}` ({len(dyn_reports)} session(s) recorded).\n")
         for dr in dyn_reports:
             report_lines.append(f"### Dynamic Sandbox Session for `{dr.get('package_name')}` on `{dr.get('device_serial')}`:\n")
             report_lines.append(f"- **Execution Status:** **{dr.get('status')}** (Monitored Duration: {dr.get('duration_seconds')}s)")
@@ -742,7 +744,7 @@ def generate_markdown_report(case_dir: Path, operator: Optional[str] = None) -> 
             report_lines.append(f"- **Active Sockets / Connections:** {len(dr.get('active_sockets_sample', []))}")
             report_lines.append("")
     else:
-        report_lines.append("*No automated sandbox dynamic execution session recorded for this case.*\n")
+        report_lines.append("**Execution Status:** Dynamic analysis was NOT performed. Analysis was conducted statically; no untrusted code was executed.\n")
 
     screenshots = data.get("screenshots", [])
     if screenshots:
@@ -889,13 +891,33 @@ def generate_markdown_report(case_dir: Path, operator: Optional[str] = None) -> 
             "to maintain strict chain of custody and evidentiary integrity.\n"
         )
 
+    # Dynamic verification of evidence hash manifest
+    hash_results = verify_case_hashes(case_dir)
+    if hash_results:
+        verified_n = sum(1 for r in hash_results if r.get("status") == "VERIFIED")
+        failed_n = len(hash_results) - verified_n
+        if failed_n == 0:
+            crypto_status = f"PASS — All {verified_n} evidence artifact(s) cryptographically verified against manifest"
+            custody_status = "Preserved in Custody (Integrity: PASS)"
+        else:
+            crypto_status = f"FAIL — {failed_n} of {len(hash_results)} evidence artifact(s) failed verification (tampered, corrupted, or missing)"
+            custody_status = f"Integrity Compromised: FAIL ({failed_n} tampered/missing artifact(s))"
+    else:
+        crypto_status = "NO EVIDENCE ARTIFACTS RECORDED (0 files checked)"
+        custody_status = "No Evidence Preserved"
+
+    unit_agency = case_meta.get("agency") or case_meta.get("unit") or ""
+
     report_lines.append("### Forensic Examiner Certification & Sign-off\n")
     report_lines.append("| Field | Certification Detail |")
     report_lines.append("|---|---|")
     report_lines.append(f"| **Lead Forensic Examiner** | `{case_meta.get('investigator', operator or 'Forensic Investigator')}` |")
-    report_lines.append(f"| **Forensic Unit / Organization** | Mobile Forensic & Threat Incident Response Unit |")
-    report_lines.append(f"| **Evidence Custody Status** | Sealed and Preserved (Read-Only) |")
-    report_lines.append(f"| **Cryptographic Verification** | PASS — All hashes verified against manifest |")
+    if unit_agency:
+        report_lines.append(f"| **Forensic Unit / Organization** | {unit_agency} |")
+    else:
+        report_lines.append(f"| **Forensic Unit / Organization** | N/A (Unspecified) |")
+    report_lines.append(f"| **Evidence Custody Status** | {custody_status} |")
+    report_lines.append(f"| **Cryptographic Verification** | {crypto_status} |")
     report_lines.append(f"| **Report Certification Date** | {now_utc} |\n")
 
     # Write report
@@ -1282,6 +1304,9 @@ def generate_pdf_report(case_dir: Path, operator: Optional[str] = None) -> Tuple
     story.append(Paragraph("7. Dynamic Sandbox Behavior & Runtime Screenshots", h1_style))
     dyn_reports = data.get("dynamic_analysis", [])
     if dyn_reports:
+        dyn_devs = ", ".join(sorted(set(str(dr.get("device_serial", "device")) for dr in dyn_reports)))
+        story.append(Paragraph(f"<b>Execution Status:</b> Dynamic analysis was performed on <b>{dyn_devs}</b> ({len(dyn_reports)} session(s) recorded).", body_style))
+        story.append(Spacer(1, 4))
         for dr in dyn_reports:
             story.append(Paragraph(
                 f"• <b>Session for {dr.get('package_name')}:</b> Status: <b>{dr.get('status')}</b> "
@@ -1290,7 +1315,7 @@ def generate_pdf_report(case_dir: Path, operator: Optional[str] = None) -> Tuple
                 bullet_style
             ))
     else:
-        story.append(Paragraph("<i>No automated sandbox dynamic execution session recorded for this case.</i>", body_style))
+        story.append(Paragraph("<b>Execution Status:</b> Dynamic analysis was NOT performed. Analysis was conducted statically; no untrusted code was executed.", body_style))
 
     screenshots = data.get("screenshots", [])
     if screenshots:
@@ -1439,13 +1464,30 @@ def generate_pdf_report(case_dir: Path, operator: Optional[str] = None) -> Tuple
     ))
     story.append(Spacer(1, 8))
 
+    # Dynamic verification of evidence hash manifest
+    pdf_hash_check = verify_case_hashes(case_dir)
+    if pdf_hash_check:
+        v_count = sum(1 for r in pdf_hash_check if r.get("status") == "VERIFIED")
+        f_count = len(pdf_hash_check) - v_count
+        if f_count == 0:
+            pdf_crypto_status = f"PASS ({v_count}/{len(pdf_hash_check)} verified)"
+            pdf_custody_status = "Preserved in Custody (Integrity: PASS)"
+        else:
+            pdf_crypto_status = f"FAIL ({f_count}/{len(pdf_hash_check)} corrupted/missing)"
+            pdf_custody_status = f"Integrity Compromised: FAIL ({f_count} corrupted/missing)"
+    else:
+        pdf_crypto_status = "NO EVIDENCE FILES RECORDED (0 files checked)"
+        pdf_custody_status = "No Evidence Preserved"
+
+    pdf_unit_agency = case_meta.get("agency") or case_meta.get("unit") or ""
+
     # Examiner Sign-Off Block
     story.append(Paragraph("<b>Forensic Examiner Certification:</b>", body_style))
     sign_table_data = [
         ["Lead Forensic Examiner:", Paragraph(f"<b>{case_meta.get('investigator', operator or 'Forensic Investigator')}</b>", body_style)],
-        ["Unit / Agency:", "Mobile Forensic & Threat Incident Response Unit"],
-        ["Evidence Custody:", "Sealed and Preserved in Read-Only Custody"],
-        ["Hash Manifest Integrity:", "VERIFIED (Cryptographic match on all evidence artifacts)"],
+        ["Unit / Agency:", pdf_unit_agency if pdf_unit_agency else "N/A (Unspecified)"],
+        ["Evidence Custody:", pdf_custody_status],
+        ["Hash Manifest Integrity:", pdf_crypto_status],
         ["Certification Date:", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")],
     ]
     st_table = Table(sign_table_data, colWidths=[140, 364])

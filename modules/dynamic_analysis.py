@@ -112,18 +112,38 @@ def capture_device_screenshot(
 
 
 def run_dynamic_sandbox(
-    apk_path: Path,
-    case_dir: Path,
+    target: Any,
+    second_arg: Any = None,
+    apk_path: Optional[Path] = None,
     package_name: Optional[str] = None,
     serial: Optional[str] = None,
     duration_seconds: int = 12,
     auto_interact: bool = True,
     uninstall_after: bool = True,
+    grant_permissions: bool = False,
+    allow_physical: bool = False,
+    risk_confirmation: Optional[str] = None,
     operator: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Execute target APK in an isolated sandbox/device, capture telemetry and screenshots."""
-    if not apk_path.exists():
-        return {"status": "ERROR", "reason": f"APK file not found: {apk_path}"}
+    """Execute target APK in an isolated sandbox/device, capture telemetry and screenshots.
+    
+    Safety constraints:
+    - Default to emulators only. Physical devices require allow_physical=True and risk_confirmation='I ACCEPT RISK'.
+    - Runtime permission granting (-g) is disabled by default and requires grant_permissions=True.
+    """
+    # Normalize arguments for backwards compatibility
+    if isinstance(target, Path) and target.is_dir():
+        case_dir = target
+        pkg = second_arg or package_name
+        apk_p = apk_path
+    elif isinstance(second_arg, Path) and second_arg.is_dir():
+        case_dir = second_arg
+        apk_p = target if isinstance(target, Path) else apk_path
+        pkg = package_name
+    else:
+        case_dir = Path(target)
+        pkg = package_name or (second_arg if isinstance(second_arg, str) else None)
+        apk_p = apk_path
 
     if not is_adb_installed():
         return {"status": "ERROR", "reason": "ADB is not installed on system."}
@@ -136,43 +156,65 @@ def run_dynamic_sandbox(
             "diagnostics": check_dynamic_environment(),
         }
 
+    # Safety check: Default to emulators only. Refuse physical devices unless confirmed with 'I ACCEPT RISK'
+    is_emulator = "emulator" in str(target_serial).lower()
+    if not is_emulator:
+        confirmed = (risk_confirmation or "").strip() == "I ACCEPT RISK"
+        if not allow_physical or not confirmed:
+            return {
+                "status": "PHYSICAL_DEVICE_REFUSED",
+                "error": f"Refused dynamic execution on physical device '{target_serial}'.",
+                "reason": (
+                    f"Target device '{target_serial}' is a physical Android device, not an emulator. "
+                    "Dynamic analysis installs and launches untrusted APK code. "
+                    "To execute on a physical test device, you must explicitly pass allow_physical=True and confirm with 'I ACCEPT RISK'."
+                ),
+                "device": target_serial,
+                "is_emulator": False,
+            }
+
     # Derive package name if omitted
-    pkg = package_name
-    if not pkg:
+    if not pkg and apk_p and apk_p.exists():
         try:
             from modules.apk_analysis import parse_apk_manifest
-            m = parse_apk_manifest(apk_path)
+            m = parse_apk_manifest(apk_p)
             pkg = m.get("package_name")
         except Exception:
-            pkg = apk_path.stem
+            pkg = apk_p.stem
 
     if not pkg or pkg == "Unknown":
-        pkg = apk_path.stem
+        pkg = apk_p.stem if apk_p else "unknown_package"
 
     screenshots: List[str] = []
     dynamic_dir = case_dir / "analysis" / "dynamic_analysis"
     dynamic_dir.mkdir(parents=True, exist_ok=True)
 
-    log_case_action(case_dir, "DYNAMIC_ANALYSIS_START", f"Starting sandbox dynamic run for {pkg} on {target_serial}", operator)
+    log_case_action(case_dir, "DYNAMIC_ANALYSIS_START", f"Starting sandbox dynamic run for {pkg} on {target_serial} (permissions_pregranted={grant_permissions})", operator)
 
     # 1. Clear logcat buffer
     run_adb_command(["logcat", "-c"], target_serial, timeout=10)
 
-    # 2. Install APK with all runtime permissions pre-granted (-g)
-    install_code, install_out, install_err = run_adb_command(
-        ["install", "-r", "-g", str(apk_path)],
-        target_serial,
-        timeout=90,
-    )
+    # 2. Install APK (dropping -g by default; granting all permissions is an explicit option)
+    if apk_p and apk_p.exists():
+        install_cmd = ["install", "-r"]
+        if grant_permissions:
+            install_cmd.append("-g")
+        install_cmd.append(str(apk_p))
 
-    install_success = (install_code == 0) and ("Success" in install_out or "Success" in install_err)
-    if not install_success:
-        return {
-            "status": "INSTALL_FAILED",
-            "reason": f"Failed to install APK onto device: {install_err or install_out}",
-            "package": pkg,
-            "device": target_serial,
-        }
+        install_code, install_out, install_err = run_adb_command(
+            install_cmd,
+            target_serial,
+            timeout=90,
+        )
+
+        install_success = (install_code == 0) and ("Success" in install_out or "Success" in install_err)
+        if not install_success:
+            return {
+                "status": "INSTALL_FAILED",
+                "reason": f"Failed to install APK onto device: {install_err or install_out}",
+                "package": pkg,
+                "device": target_serial,
+            }
 
     # 3. Launch application launcher activity
     # Use monkey to start default launcher activity for package

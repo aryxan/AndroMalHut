@@ -325,16 +325,39 @@ def get_or_create_scan(
 
 
 
+def _compute_audit_entry_hash(prev_hash: str, timestamp_utc: str, action: str, details: str, operator: str) -> str:
+    payload = f"{prev_hash}|{timestamp_utc}|{action}|{details}|{operator}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def log_case_action(case_dir: Path, action: str, details: str, operator: Optional[str] = None) -> None:
-    """Record a forensic action in the case audit log and case.json history."""
+    """Record a forensic action in the case audit log and case.json history with cryptographic hash chaining."""
     now_utc = datetime.now(timezone.utc).isoformat()
     op = operator or os.getenv("USER", "Forensic Investigator")
 
-    # Update log file
+    # Update log file with tamper-evident hash chain
     audit_log = case_dir / "logs" / "case_audit.log"
     audit_log.parent.mkdir(parents=True, exist_ok=True)
+
+    prev_hash = "0" * 64
+    if audit_log.exists() and audit_log.stat().st_size > 0:
+        try:
+            lines = [l.strip() for l in audit_log.read_text(encoding="utf-8").splitlines() if l.strip()]
+            if lines:
+                last_line = lines[-1]
+                m = re.search(r"hash=([a-f0-9]{64})", last_line)
+                if m:
+                    prev_hash = m.group(1)
+                else:
+                    prev_hash = hashlib.sha256(last_line.encode("utf-8")).hexdigest()
+        except Exception:
+            prev_hash = "0" * 64
+
+    entry_hash = _compute_audit_entry_hash(prev_hash, now_utc, action, details, op)
+    log_line = f"[{now_utc}] [{action}] {details} | op={op} | prev={prev_hash} | hash={entry_hash}\n"
+
     with open(audit_log, "a", encoding="utf-8") as f:
-        f.write(f"[{now_utc}] [{action}] {details} (Operator: {op})\n")
+        f.write(log_line)
 
     # Update case.json
     case_json_file = case_dir / "case.json"
@@ -348,10 +371,65 @@ def log_case_action(case_dir: Path, action: str, details: str, operator: Optiona
                 "action": action,
                 "details": details,
                 "operator": op,
+                "prev_hash": prev_hash,
+                "hash": entry_hash,
             })
             case_json_file.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         except Exception as e:
             print(f"[!] Warning: Failed to update case.json history: {e}", file=sys.stderr)
+
+
+def verify_audit_log(case_dir: Path) -> Dict[str, Any]:
+    """Verify cryptographic hash chaining across all entries in case_audit.log."""
+    audit_log = case_dir / "logs" / "case_audit.log"
+    if not audit_log.exists():
+        return {"status": "NO_LOG", "message": "Audit log does not exist.", "valid": True, "entries_count": 0}
+
+    lines = [l.strip() for l in audit_log.read_text(encoding="utf-8").splitlines() if l.strip()]
+    if not lines:
+        return {"status": "EMPTY", "message": "Audit log is empty.", "valid": True, "entries_count": 0}
+
+    expected_prev = "0" * 64
+    for idx, line in enumerate(lines, 1):
+        m = re.search(r"^\[(.*?)\] \[(.*?)\] (.*?) \| op=(.*?) \| prev=([a-f0-9]{64}) \| hash=([a-f0-9]{64})$", line)
+        if not m:
+            return {
+                "status": "FORMAT_ERROR",
+                "message": f"Line {idx} does not contain valid cryptographic chain markers.",
+                "valid": False,
+                "tampered_line": idx,
+                "entries_count": len(lines),
+            }
+
+        ts, action, details, op, prev_h, curr_h = m.groups()
+        if prev_h != expected_prev:
+            return {
+                "status": "CHAIN_BROKEN",
+                "message": f"Cryptographic chain broken at line {idx}: prev_hash does not match preceding entry.",
+                "valid": False,
+                "tampered_line": idx,
+                "entries_count": len(lines),
+            }
+
+        calc_h = _compute_audit_entry_hash(prev_h, ts, action, details, op)
+        if calc_h != curr_h:
+            return {
+                "status": "TAMPERED",
+                "message": f"Tampered entry detected at line {idx}: calculated hash does not match recorded hash.",
+                "valid": False,
+                "tampered_line": idx,
+                "entries_count": len(lines),
+            }
+
+        expected_prev = curr_h
+
+    return {
+        "status": "VALID",
+        "message": f"All {len(lines)} audit log entries successfully verified in cryptographic hash chain.",
+        "valid": True,
+        "entries_count": len(lines),
+        "latest_hash": expected_prev,
+    }
 
 
 def record_evidence_file(

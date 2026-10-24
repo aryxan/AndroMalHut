@@ -197,6 +197,67 @@ class TestReportingAndProvenance(unittest.TestCase):
         self.assertIn("Threat Assessment for `com.suspicious.app`", content)
         self.assertIn("Application: `com.suspicious.app`", content)
 
+    def test_tampered_evidence_shows_fail_in_report(self):
+        from modules.case_manager import record_evidence_file
+
+        # Create a dummy evidence file and record it
+        dummy_apk = self.test_dir / "sample_target.apk"
+        dummy_apk.write_bytes(b"ORIGINAL_VALID_BINARY_BYTES_12345")
+        preserved = record_evidence_file(
+            self.case_dir,
+            dummy_apk,
+            "original_apks",
+            "Target APK evidence file",
+            dest_filename="sample_target.apk",
+            operator="aryxan",
+        )
+
+        # Before tampering: generate report and verify it passes
+        md_file_clean = generate_markdown_report(self.case_dir, operator="aryxan")
+        clean_content = md_file_clean.read_text(encoding="utf-8")
+        self.assertIn("PASS — All 1 evidence artifact(s) cryptographically verified against manifest", clean_content)
+        self.assertNotIn("Integrity Compromised: FAIL", clean_content)
+
+        # Tamper with the evidence file
+        preserved.write_bytes(b"TAMPERED_MALICIOUS_INJECTED_BYTES")
+
+        # After tampering: verify report shows FAIL
+        md_file_tampered = generate_markdown_report(self.case_dir, operator="aryxan")
+        tampered_content = md_file_tampered.read_text(encoding="utf-8")
+        self.assertIn("FAIL — 1 of 1 evidence artifact(s) failed verification", tampered_content)
+        self.assertIn("Integrity Compromised: FAIL (1 tampered/missing artifact(s))", tampered_content)
+
+        # Test PDF report as well
+        pdf_file, err = generate_pdf_report(self.case_dir, operator="aryxan")
+        self.assertIsNone(err)
+        self.assertIsNotNone(pdf_file)
+
+    def test_audit_log_hash_chain_tamper_detection(self):
+        from modules.case_manager import log_case_action, verify_audit_log
+
+        # Log two actions
+        log_case_action(self.case_dir, "ANALYSIS_STARTED", "Starting deep forensic analysis", operator="aryxan")
+        log_case_action(self.case_dir, "ANALYSIS_COMPLETED", "Forensic analysis completed successfully", operator="aryxan")
+
+        # Verify audit log passes
+        res = verify_audit_log(self.case_dir)
+        self.assertTrue(res["valid"])
+        self.assertEqual(res["status"], "VALID")
+        self.assertGreaterEqual(res["entries_count"], 2)
+
+        # Tamper with the audit log file
+        audit_file = self.case_dir / "logs" / "case_audit.log"
+        lines = audit_file.read_text(encoding="utf-8").splitlines()
+        # Alter a detail in the first entry without updating its hash
+        lines[0] = lines[0].replace("ANALYSIS_STARTED", "UNAUTHORIZED_EDIT")
+        audit_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        # Verify audit log detects tampering
+        tampered_res = verify_audit_log(self.case_dir)
+        self.assertFalse(tampered_res["valid"])
+        self.assertIn(tampered_res["status"], ("TAMPERED", "FORMAT_ERROR", "CHAIN_BROKEN"))
+
 
 if __name__ == "__main__":
     unittest.main()
+

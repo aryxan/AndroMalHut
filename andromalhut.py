@@ -24,6 +24,7 @@ from modules.case_manager import (
     set_active_case,
     list_cases,
     verify_case_hashes,
+    verify_audit_log,
     record_evidence_file,
     get_default_base_dir,
     calculate_hashes,
@@ -1140,7 +1141,14 @@ def run_interactive_menu() -> None:
                         print(f"  [{ev.get('timestamp_utc')[:19]}] {ev.get('event_type'):<20} | {ev.get('description')[:70]}")
 
             elif tele_sub == "6":
-                print(f"\n{C_BOLD}Dynamic Sandbox Behavior Monitoring & Live Screen Capture:{C_RESET}")
+                print(f"\n{C_RED}{C_BOLD}[!] WARNING: Dynamic Sandbox executes untrusted application code.{C_RESET}")
+                print(f"{C_YELLOW}    By default, only Android emulators are supported to quarantine execution.{C_RESET}")
+                dyn_ack = input(f"{C_BOLD}Type 'RUN' to acknowledge risk and proceed with dynamic sandbox (or Enter to cancel):{C_RESET} ").strip()
+                if dyn_ack != "RUN":
+                    print(f"{C_GRAY}[i] Dynamic execution cancelled.{C_RESET}")
+                    input(f"\n{C_GRAY}Press Enter to return to main menu...{C_RESET}")
+                    continue
+
                 env = check_dynamic_environment()
                 if not env["adb_installed"]:
                     print(f"{C_RED}[!] ADB is not installed. Please install adb: sudo apt install adb{C_RESET}")
@@ -1149,6 +1157,23 @@ def run_interactive_menu() -> None:
                     print(f"    Available AVDs: {', '.join(env['available_avds']) if env['available_avds'] else 'None detected'}")
                     print("    Please start an Android emulator or attach a test device with USB debugging.")
                 else:
+                    devs = list_connected_devices()
+                    target_d = devs[0] if devs else {}
+                    target_s = target_d.get("serial", "")
+                    is_phys = target_s and "emulator" not in target_s.lower()
+                    allow_phys = False
+                    risk_conf = ""
+                    if is_phys:
+                        print(f"\n{C_RED}{C_BOLD}[!] CAUTION: Target device '{target_s}' is a PHYSICAL DEVICE, not an emulator!{C_RESET}")
+                        print(f"{C_RED}    Executing untrusted malware on personal/work hardware can compromise the device.{C_RESET}")
+                        risk_input = input(f"{C_BOLD}To proceed on physical hardware, you must type 'I ACCEPT RISK':{C_RESET} ").strip()
+                        if risk_input != "I ACCEPT RISK":
+                            print(f"{C_YELLOW}[!] Physical execution cancelled without risk confirmation.{C_RESET}")
+                            input(f"\n{C_GRAY}Press Enter to return to main menu...{C_RESET}")
+                            continue
+                        allow_phys = True
+                        risk_conf = "I ACCEPT RISK"
+
                     # Suggest package from existing apk_analysis if available
                     cand_pkg = ""
                     apk_dir = case_dir / "analysis" / "apk_analysis"
@@ -1175,8 +1200,18 @@ def run_interactive_menu() -> None:
                             if apk_in and Path(apk_in).exists():
                                 apk_to_install = Path(apk_in)
 
+                        grant_p = input("Grant all runtime permissions automatically (-g)? [y/N] (Default: No): ").strip().lower() == "y"
+
                         with ForensicSpinner(f"Running dynamic sandbox on {target_pkg} ({dur}s)..."):
-                            d_res = run_dynamic_sandbox(case_dir, target_pkg, apk_path=apk_to_install, duration_seconds=dur)
+                            d_res = run_dynamic_sandbox(
+                                case_dir,
+                                target_pkg,
+                                apk_path=apk_to_install,
+                                duration_seconds=dur,
+                                grant_permissions=grant_p,
+                                allow_physical=allow_phys,
+                                risk_confirmation=risk_conf,
+                            )
 
                         if d_res.get("status") in ("COMPLETED", "SUCCESS"):
                             print(f"{C_GREEN}[+] Dynamic Sandbox Session Completed successfully!{C_RESET}")
@@ -1189,7 +1224,7 @@ def run_interactive_menu() -> None:
                                 print(f"      • {sc}")
                             print(f"    Session JSON Report  : {d_res.get('saved_report_path')}")
                         else:
-                            print(f"{C_RED}[!] Dynamic sandbox error: {d_res.get('error')}{C_RESET}")
+                            print(f"{C_RED}[!] Dynamic sandbox error: {d_res.get('error') or d_res.get('reason')}{C_RESET}")
 
         elif choice == "5":
             # === [5] Generate Forensic Reports ===
@@ -1387,11 +1422,18 @@ def main() -> None:
     # sandbox
     p_sand = subparsers.add_parser("sandbox", help="Run dynamic behavior sandbox on connected Android device/emulator")
     p_sand.add_argument("package", help="Application package name to run sandbox analysis on")
+    p_sand.add_argument("--dynamic", action="store_true", help="Explicit opt-in flag required to acknowledge running untrusted APK code")
     p_sand.add_argument("--apk", default=None, help="Path to APK file to install and launch")
     p_sand.add_argument("--duration", type=int, default=15, help="Monitoring duration in seconds (default: 15)")
+    p_sand.add_argument("--grant-permissions", action="store_true", help="Grant all runtime permissions automatically during installation (-g)")
+    p_sand.add_argument("--allow-physical", action="store_true", help="Allow execution on physical Android devices")
+    p_sand.add_argument("--confirm-risk", default="", help="Typed confirmation ('I ACCEPT RISK') required for physical devices")
 
     # verify-hashes
     subparsers.add_parser("verify-hashes", help="Cryptographically verify preserved evidence against manifest")
+
+    # verify-audit
+    subparsers.add_parser("verify-audit", help="Verify cryptographic hash chaining across case_audit.log entries")
 
     args = parser.parse_args()
 
@@ -1590,8 +1632,22 @@ def main() -> None:
             print(f"[!] Ollama Error: {res.get('error')}", file=sys.stderr)
 
     elif cmd == "sandbox":
+        if not args.dynamic:
+            print("[!] Error: Dynamic analysis executes untrusted code on an attached device or emulator.", file=sys.stderr)
+            print("    To proceed, you must explicitly pass the '--dynamic' opt-in flag.", file=sys.stderr)
+            sys.exit(1)
+
         apk_p = Path(args.apk) if args.apk else None
-        res = run_dynamic_sandbox(case_dir, args.package, apk_path=apk_p, duration_seconds=args.duration, serial=args.device_serial)
+        res = run_dynamic_sandbox(
+            case_dir,
+            args.package,
+            apk_path=apk_p,
+            duration_seconds=args.duration,
+            serial=args.device_serial,
+            grant_permissions=args.grant_permissions,
+            allow_physical=args.allow_physical,
+            risk_confirmation=args.confirm_risk,
+        )
         if res.get("status") in ("COMPLETED", "SUCCESS"):
             print(f"[+] Dynamic Sandbox Complete: {args.package}")
             print(f"    Monitored Duration: {res.get('duration_seconds')}s")
@@ -1600,13 +1656,21 @@ def main() -> None:
             print(f"    Screenshots Preserved: {len(res.get('screenshots', []))}")
             print(f"    Report JSON: {res.get('saved_report_path')}")
         else:
-            print(f"[!] Dynamic Sandbox Error: {res.get('error')}", file=sys.stderr)
+            print(f"[!] Dynamic Sandbox Error: {res.get('error') or res.get('reason')}", file=sys.stderr)
             sys.exit(1)
 
     elif cmd == "verify-hashes":
         results = verify_case_hashes(case_dir)
         verified = sum(1 for r in results if r.get("status") == "VERIFIED")
-        print(f"[+] Verification completed: {verified}/{len(results)} items matched recorded hashes.")
+        print(f"[+] Evidence verification: {verified}/{len(results)} items matched recorded hashes.")
+        audit_res = verify_audit_log(case_dir)
+        print(f"[+] Audit log verification: {audit_res.get('status')} - {audit_res.get('message')}")
+
+    elif cmd == "verify-audit":
+        audit_res = verify_audit_log(case_dir)
+        print(f"[{audit_res.get('status')}] {audit_res.get('message')}")
+        if not audit_res.get("valid", True):
+            sys.exit(1)
 
 
 if __name__ == "__main__":

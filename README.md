@@ -8,7 +8,7 @@
 [![CI](https://github.com/aryxan/AndroMalHut/actions/workflows/ci.yml/badge.svg)](https://github.com/aryxan/AndroMalHut/actions/workflows/ci.yml)
 [![GPU Accelerated](https://img.shields.io/badge/GPU%20Engine-NVIDIA%20CUDA%20XGBoost-76B900?logo=nvidia)]()
 
-> **AndroMalHut** (developed by [**aryxan**](https://github.com/aryxan)) is a terminal-based digital forensics, APK reverse engineering, and mobile malware triage toolkit. Engineered for incident responders, digital forensics investigators, and security researchers, it delivers evidence-grade analysis of suspicious Android applications without executing untrusted binaries.
+> **AndroMalHut** (developed by [**aryxan**](https://github.com/aryxan)) is a terminal-based digital forensics, APK reverse engineering, and mobile malware triage toolkit. Engineered for incident responders, digital forensics investigators, and security researchers, it delivers forensic static and opt-in dynamic analysis of suspicious Android applications (performing static analysis by default without executing untrusted binaries).
 
 ---
 
@@ -127,7 +127,7 @@ When a scan is created or selected, AndroMalHut structures all evidence and anal
 │   ├── CASE_REPORT_<Case>.pdf        # Executive cryptographic PDF report
 │   └── CASE_REPORT_<Case>.md         # Complete 16-section technical Markdown report
 └── logs/                             # Audit logging
-    └── case_audit.log                # Immutable timestamped chronological action ledger
+    └── case_audit.log                # Cryptographically hash-chained tamper-evident chronological action ledger
 ```
 
 ---
@@ -375,8 +375,8 @@ python3 andromalhut.py import-sms /path/to/sms_backup.xml
 # Correlate incident timeline from case evidence
 python3 andromalhut.py timeline
 
-# Run dynamic behavior sandbox on device/emulator
-python3 andromalhut.py sandbox --package com.target.suspicious --duration 30
+# Run dynamic behavior sandbox (opt-in; emulator by default, physical requires confirmation)
+python3 andromalhut.py sandbox --dynamic --package com.target.suspicious --duration 30
 
 # Generate forensic reports
 python3 andromalhut.py report
@@ -385,8 +385,11 @@ python3 andromalhut.py report-pdf
 # Generate AI-assisted findings narrative
 python3 andromalhut.py explain-ollama --model qwen3:8b
 
-# Cryptographically verify evidence integrity
+# Cryptographically verify evidence file hashes against manifest
 python3 andromalhut.py verify-hashes
+
+# Cryptographically verify case audit log hash chain integrity
+python3 andromalhut.py verify-audit
 ```
 
 ---
