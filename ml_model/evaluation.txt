@@ -1,21 +1,31 @@
-AScanner Multi-Source Android Malware Classifier Evaluation
-==========================================================
-Datasets: AndroZoo (10,686) + Drebin (15,036) + Modern Real-World Droppers & Utils -> Total 25962 samples
-Engine: XGBoost on NVIDIA GeForce RTX 5050 Laptop GPU (CUDA)
-Features: 634
-Accuracy: 0.9332
-Balanced Accuracy: 0.9332
-ROC-AUC: 0.9823
+AndroMalHut Multi-Source Android Malware Classifier Evaluation Summary
+======================================================================
+Datasets: AndroZoo (10,686 raw) + Drebin (15,036 raw)
+Pre-Split Deduplication: 25,722 raw -> 11,696 unique feature rows
+Class Distribution: 4,797 Malware, 6,899 Benign
+Features: 634 canonical permissions & interaction indicators
+Execution Engine: XGBoost on NVIDIA GeForce RTX 5050 Laptop GPU (CUDA)
 
-Confusion Matrix (Actual Rows, Predicted Cols):
-  [Benign:   2356 | False Pos:   163]
-  [False Neg:  184 | Malware:    2490]
+Holdout Test Results (Random 70/15/15 Split, n=1,755):
+  Overall Accuracy:          0.9339 (93.39%)
+  Balanced Accuracy:         0.9338 (93.38%)
+  ROC-AUC Score:             0.9822
+  False Positive Rate (FPR): 0.0657 (6.57%)
+  False Negative Rate (FNR): 0.0667 (6.67%)
+  Confusion Matrix: TN=967, FP=68, FN=48, TP=672
 
-              precision    recall  f1-score   support
+Source-Ablation Results (111 shared permissions only):
+  Accuracy:  0.8872
+  Balanced:  0.8822
+  ROC-AUC:   0.9551
+  FPR:       0.0899
+  FNR:       0.1458
 
-      Benign       0.93      0.94      0.93      2519
-     Malware       0.94      0.93      0.93      2674
+Cross-Dataset Generalization Results:
+  Drebin -> AndroZoo: Acc=0.5365, AUC=0.8051, FPR=0.0410, FNR=0.6284
+  AndroZoo -> Drebin: Acc=0.7287, AUC=0.8232, FPR=0.2062, FNR=0.3822
 
-    accuracy                           0.93      5193
-   macro avg       0.93      0.93      0.93      5193
-weighted avg       0.93      0.93      0.93      5193
+Model Artifacts & Integrity:
+  Native XGBoost JSON: andromalhut_xgboost.json (SHA-256: 13f5fa097c7734380d0e1d41a5f94e01fd1664acde68b02380175261a208e79d)
+  Joblib Model:        andromalhut_xgboost.joblib (SHA-256: be2be9e807f912ef6901f0a40c289658425fbf08585b927dec541cad0ff6a86c)
+  Legacy Joblib:       drebin_rf.joblib (SHA-256: be2be9e807f912ef6901f0a40c289658425fbf08585b927dec541cad0ff6a86c)

@@ -77,7 +77,7 @@ check_cmd "apksigner" "APK Signature Verifier (apksigner)" "apksigner" "false" "
 echo -e "\n${C_BOLD}--- Network & Packet Dissection Tools ---${C_RESET}"
 check_cmd "tshark" "Wireshark / TShark CLI" "tshark" "false" "Dissects PCAP/PCAPNG network captures to extract C2 traffic"
 
-echo -e "\n${C_BOLD}--- Python Forensic Reporting Libraries ---${C_RESET}"
+echo -e "\n${C_BOLD}--- Python Forensic Reporting & Analysis Libraries ---${C_RESET}"
 if python3 -c "import reportlab" &>/dev/null; then
     echo -e "  [${C_GREEN}INSTALLED${C_RESET}] ${C_BOLD}ReportLab${C_RESET} (Python library)"
     echo -e "              ${C_GRAY}Required for PDF forensic report generation${C_RESET}"
@@ -85,6 +85,26 @@ else
     echo -e "  [${C_YELLOW}OPTIONAL MISSING${C_RESET}] ${C_BOLD}ReportLab${C_RESET} (Python library)"
     echo -e "              ${C_GRAY}Required for PDF forensic report generation${C_RESET}"
     PIP_PACKAGES+=("reportlab")
+    MISSING_OPTIONAL=$((MISSING_OPTIONAL + 1))
+fi
+
+if python3 -c "import androguard" &>/dev/null; then
+    echo -e "  [${C_GREEN}INSTALLED${C_RESET}] ${C_BOLD}androguard${C_RESET} (Python library)"
+    echo -e "              ${C_GRAY}Static APK & DEX reverse engineering engine${C_RESET}"
+else
+    echo -e "  [${C_YELLOW}OPTIONAL MISSING${C_RESET}] ${C_BOLD}androguard${C_RESET} (Python library, pinned: androguard>=4.0.0,<5.0.0)"
+    echo -e "              ${C_GRAY}Static APK & DEX reverse engineering engine${C_RESET}"
+    PIP_PACKAGES+=("androguard>=4.0.0,<5.0.0")
+    MISSING_OPTIONAL=$((MISSING_OPTIONAL + 1))
+fi
+
+if python3 -c "import cryptography" &>/dev/null; then
+    echo -e "  [${C_GREEN}INSTALLED${C_RESET}] ${C_BOLD}cryptography${C_RESET} (Python library)"
+    echo -e "              ${C_GRAY}Cryptographic APK signing verification${C_RESET}"
+else
+    echo -e "  [${C_YELLOW}OPTIONAL MISSING${C_RESET}] ${C_BOLD}cryptography${C_RESET} (Python library, pinned: cryptography>=40.0.0)"
+    echo -e "              ${C_GRAY}Cryptographic APK signing verification${C_RESET}"
+    PIP_PACKAGES+=("cryptography>=40.0.0")
     MISSING_OPTIONAL=$((MISSING_OPTIONAL + 1))
 fi
 
@@ -100,12 +120,12 @@ fi
 echo -e "\n--------------------------------------------------------------------"
 if [[ ${MISSING_CORE} -eq 0 && ${MISSING_OPTIONAL} -eq 0 ]]; then
     echo -e "${C_GREEN}${C_BOLD}[✓] All recommended forensic tools and libraries are present!${C_RESET}"
-    echo -e "You can launch DroidSleuth immediately via: ${C_BOLD}./launch.sh${C_RESET}"
+    echo -e "You can launch AndroMalHut immediately via: ${C_BOLD}./launch.sh${C_RESET}"
     exit 0
 fi
 
 echo -e "${C_YELLOW}${C_BOLD}[i] Audit Summary: ${MISSING_CORE} required missing, ${MISSING_OPTIONAL} optional tools missing.${C_RESET}"
-echo -e "Note: DroidSleuth includes internal pure-Python parsers for AXML, DEX, and network indicators,"
+echo -e "Note: AndroMalHut includes internal pure-Python parsers for AXML, DEX, and network indicators,"
 echo -e "so it remains fully operational even without all external reverse engineering tools.\n"
 
 if [[ ${#DEB_PACKAGES[@]} -gt 0 ]]; then
@@ -130,6 +150,6 @@ if [[ -t 0 ]]; then
         pip install --upgrade pip
         pip install -r "${SCRIPT_DIR}/requirements.txt"
         echo -e "${C_GREEN}[+] Virtual environment successfully configured!${C_RESET}"
-        echo -e "Run ${C_BOLD}./launch.sh${C_RESET} to start DroidSleuth."
+        echo -e "Run ${C_BOLD}./launch.sh${C_RESET} to start AndroMalHut."
     fi
 fi

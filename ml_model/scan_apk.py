@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AScanner Hybrid Android APK Static Inspector & Malware Classifier
-Uses a multi-source machine learning model trained on 25,722 applications
+AndroMalHut Hybrid Android APK Static Inspector & Malware Classifier
+Uses a multi-source machine learning model trained on benchmark applications
 (AndroZoo + Drebin datasets) alongside static forensic indicator extraction.
 """
 
@@ -33,7 +33,6 @@ except ImportError as exc:
     sys.exit(f"Missing dependency: {exc}")
 
 BASE = Path(__file__).resolve().parent
-MODEL_PATH = BASE / "drebin_rf.joblib"
 REPORT_DIR = BASE / "reports"
 
 
@@ -43,6 +42,72 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: f.read(1024 * 1024), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def load_ml_model(base_dir: Path):
+    """
+    Safely load trained XGBoost model.
+    Prefers native JSON format (no arbitrary code execution risk).
+    When loading joblib, verifies cryptographic SHA-256 against recorded metadata.
+    """
+    native_json = base_dir / "andromalhut_xgboost.json"
+    meta_path = base_dir / "andromalhut_model_metadata.json"
+    eval_path = base_dir / "evaluation.json"
+
+    meta = {}
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    elif eval_path.exists():
+        try:
+            meta = json.loads(eval_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # 1. Native XGBoost JSON (Safe deserialization)
+    if native_json.exists():
+        try:
+            import xgboost as xgb
+            model = xgb.XGBClassifier()
+            model.load_model(str(native_json))
+            features = meta.get("features", [])
+            canonical_features = meta.get("canonical_features", features)
+            total_samples = meta.get("total_samples", meta.get("datasets", {}).get("deduplicated_samples_total", 11696))
+            return model, features, canonical_features, total_samples, "XGBoost Native JSON (Safe)"
+        except Exception as e:
+            print(f"[!] Warning: Failed loading native JSON model, falling back to joblib: {e}", file=sys.stderr)
+
+    # 2. Joblib candidates with cryptographic checksum verification
+    joblib_candidates = [
+        base_dir / "andromalhut_xgboost.joblib",
+        base_dir / "drebin_rf.joblib",
+    ]
+    for jc in joblib_candidates:
+        if jc.exists():
+            expected_sha = None
+            if meta:
+                artifacts = meta.get("model_artifacts", {})
+                for art in artifacts.values():
+                    if art.get("file") == jc.name:
+                        expected_sha = art.get("sha256")
+                        break
+            actual_sha = sha256_file(jc)
+            if expected_sha and actual_sha != expected_sha:
+                raise ValueError(
+                    f"Security Alert: Model file {jc.name} SHA-256 mismatch! "
+                    f"Expected {expected_sha}, got {actual_sha}"
+                )
+            saved = load(jc)
+            model = saved["model"]
+            features = saved.get("features", meta.get("features", []))
+            canonical_features = saved.get("canonical_features", meta.get("canonical_features", features))
+            total_samples = saved.get("total_samples", meta.get("total_samples", 11696))
+            return model, features, canonical_features, total_samples, f"Joblib (SHA256: {actual_sha[:10]}...)"
+
+    raise FileNotFoundError(f"No valid model artifacts found in {base_dir}")
+
 
 
 def canon_name(name: str) -> str:
@@ -235,6 +300,7 @@ def main():
     parser.add_argument("apk", help="Path to APK file")
     parser.add_argument("--installer", default=None, help="Installer package name from dumpsys")
     parser.add_argument("--source", default=None, help="Download source description")
+    parser.add_argument("--online", action="store_true", default=False, help="Opt-in to online lookups (Google Play, CIRCL, VirusTotal)")
     args = parser.parse_args()
 
     apk_path = Path(args.apk).expanduser().resolve()
@@ -242,14 +308,42 @@ def main():
         sys.exit(f"ERROR: APK not found: {apk_path}")
     if apk_path.suffix.lower() != ".apk":
         sys.exit("ERROR: Input must have an .apk extension")
-    if not MODEL_PATH.is_file():
-        sys.exit(f"ERROR: Model file not found: {MODEL_PATH}")
 
     digest = sha256_file(apk_path)
     data = extract_features_from_apk(apk_path)
     perms_set = data["perms_set"]
     intents_set = data["intents_set"]
     code_apis = data["sensitive_code_apis"]
+
+    # Extract signing certificate for cryptographic identity verification
+    cert_verified_clean = False
+    cert_fp = None
+    try:
+        from modules.apk_analysis import extract_apk_signing_info
+        from modules.online_verifier import KNOWN_VENDOR_CERTIFICATES, verify_package_online
+        cert_info = extract_apk_signing_info(apk_path)
+        for cert in cert_info.get("certificates", []):
+            fp = cert.get("fingerprint_sha256")
+            if fp:
+                cert_fp = fp
+                pkg_key = data.get("package", "")
+                known_fps = [kfp.lower().replace(":", "").strip() for kfp in KNOWN_VENDOR_CERTIFICATES.get(pkg_key, [])]
+                if fp.lower().replace(":", "").strip() in known_fps:
+                    cert_verified_clean = True
+                    break
+    except Exception:
+        pass
+
+    # Optional online lookups (strictly opt-in via --online)
+    online_info = None
+    if args.online:
+        try:
+            from modules.online_verifier import verify_package_online
+            online_info = verify_package_online(data.get("package", ""), digest, cert_fingerprint=cert_fp, online=True)
+            if online_info.get("identity_status") == "VERIFIED":
+                cert_verified_clean = True
+        except Exception as e:
+            print(f"[!] Warning: Online lookup failed: {e}", file=sys.stderr)
 
     # Resolve installer and provenance context from args or evidence directory
     pkg_name = data.get("package", "")
@@ -270,14 +364,9 @@ def main():
                     pass
 
     # Authoritative determination of official Google Play Store provenance
-    is_play_store = False
-    if installer == "com.android.vending" or (source and "play store" in source.lower()):
-        is_play_store = True
-    elif source and ("sideload" in source.lower() or "direct" in source.lower()):
-        is_play_store = False
-    else:
-        if 'COM.ANDROID.VENDING.BILLING' in perms_set:
-            is_play_store = True
+    # SECURITY RULE: Package name alone or BILLING permission must NEVER force benign!
+    # Only a cryptographic signing certificate match can prove authorized identity.
+    is_play_store = bool(cert_verified_clean)
 
     # Detect hardware acceleration engine
     gpu_device_label = "CPU Execution Engine"
@@ -288,11 +377,11 @@ def main():
     except Exception:
         pass
 
-    # Load model
-    saved = load(MODEL_PATH)
-    model = saved["model"]
-    feature_names = saved["features"]
-    canonical_features = saved.get("canonical_features", feature_names)
+    # Load model securely
+    try:
+        model, feature_names, canonical_features, total_samples, model_source_desc = load_ml_model(BASE)
+    except Exception as e:
+        sys.exit(f"ERROR: Failed loading ML model: {e}")
 
     # Construct feature row matching the model's schema
     row = {}
@@ -318,30 +407,41 @@ def main():
     prob_benign = float(probabilities[0])
 
     # Dynamic verdict determined purely by model probability distribution
+    # Dynamic verdict determined purely by model probability distribution
     if prob_malware >= 0.65:
         verdict = "MALICIOUS"
         classification = "MALWARE"
     elif prob_malware >= 0.50:
         verdict = "SUSPICIOUS"
-        classification = "MALWARE"
+        classification = "SUSPICIOUS"
     else:
         verdict = "BENIGN"
         classification = "BENIGN"
 
-    # Contextual calibration: verified Play Store apps without high-confidence malware signals are benign
-    if is_play_store and prob_malware < 0.65:
+    # Contextual calibration: cryptographically verified applications without high-confidence signals are benign
+    if cert_verified_clean and prob_malware < 0.65:
         verdict = "BENIGN"
         classification = "BENIGN"
 
+    # Explainable behavioral interaction risk patterns
+    behavioral_risk_flags = []
+    if row.get('RISK_OVERLAY_ACCESS'):
+        behavioral_risk_flags.append("Banking Overlay / Accessibility Hijacking pattern detected")
+    if row.get('RISK_COVERT_SPYWARE'):
+        behavioral_risk_flags.append("Covert surveillance pattern detected (microphone/camera + call logs + contacts/SMS)")
+    if row.get('RISK_DEVICE_TAKEOVER'):
+        behavioral_risk_flags.append("Device Admin / Accessibility takeover privileges requested")
+    if row.get('RISK_SMS_BOOT'):
+        behavioral_risk_flags.append("SMS Exfiltration / 2FA Interception with Boot persistence")
+
+    # Forensic override: elevate benign verdict to SUSPICIOUS when critical takeover or surveillance patterns are present
+    if verdict == "BENIGN" and (row.get('RISK_OVERLAY_ACCESS') or row.get('RISK_DEVICE_TAKEOVER') or row.get('RISK_COVERT_SPYWARE')):
+        verdict = "SUSPICIOUS"
+        classification = "SUSPICIOUS"
+
     # Identify active threat indicators (strictly from genuine declared capabilities)
     active_indicators = [k for k, v in row.items() if v == 1]
-    highlighted_threats = []
-    if row.get('RISK_OVERLAY_ACCESS'):
-        highlighted_threats.append("Banking Overlay / Accessibility Hijacking pattern detected")
-    if row.get('RISK_COVERT_SPYWARE'):
-        highlighted_threats.append("Covert surveillance pattern detected (microphone/camera + call logs + contacts/SMS)")
-    if row.get('RISK_DEVICE_TAKEOVER'):
-        highlighted_threats.append("Device Admin / Accessibility takeover privileges requested")
+    highlighted_threats = list(behavioral_risk_flags)
     if 'SYSTEM_ALERT_WINDOW' in perms_set:
         highlighted_threats.append("Draw Overlays (SYSTEM_ALERT_WINDOW) requested")
     if 'BIND_ACCESSIBILITY_SERVICE' in perms_set:
@@ -361,7 +461,7 @@ def main():
     evidence_quality = "HIGH" if data["parsing_status"] == "SUCCESS" else "MODERATE"
     reason = (
         f"Multi-source ML model ({gpu_device_label}) predicts {prob_malware:.1%} malware probability "
-        f"based on {len(active_indicators)} matched capability features across 27,722 training samples."
+        f"based on {len(active_indicators)} matched capability features across {total_samples:,} training samples."
     )
 
     limitations = [
@@ -394,6 +494,7 @@ def main():
             "evidence_quality": evidence_quality,
             "reason": reason,
             "highlighted_threats": highlighted_threats,
+            "behavioral_risk_flags": behavioral_risk_flags,
             "active_feature_count": len(active_indicators),
             "limitations": limitations
         }
@@ -406,7 +507,7 @@ def main():
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     print("\n" + "=" * 60)
-    print("      ASCANNER STATIC APK INSPECTION & MALWARE TRIAGE")
+    print("     ANDROMALHUT STATIC APK INSPECTION & MALWARE TRIAGE")
     print("=" * 60)
     print(f"File             : {apk_path.name}")
     print(f"SHA-256          : {digest}")

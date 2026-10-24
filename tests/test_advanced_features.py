@@ -35,14 +35,21 @@ from modules.reporting import (
     generate_pdf_report,
     REPORTLAB_AVAILABLE,
 )
+from modules.device_inventory import (
+    validate_package_name,
+    is_valid_package_name,
+    validate_apk_path,
+    inspect_package,
+    pull_application_apk,
+)
 
 
-class TestHackathonRequirements(unittest.TestCase):
+class TestAdvancedFeatures(unittest.TestCase):
     def setUp(self):
-        self.test_dir = tempfile.mkdtemp(prefix="test_hackathon_")
+        self.test_dir = tempfile.mkdtemp(prefix="test_adv_features_")
         self.base_path = Path(self.test_dir)
         self.case_dir = init_case(
-            description="Hackathon Requirements Verification Scan",
+            description="Advanced Forensic Feature Verification Scan",
             investigator="Forensic Lead",
             device_identifier="Pixel Test Device",
             base_dir=self.base_path,
@@ -69,8 +76,8 @@ class TestHackathonRequirements(unittest.TestCase):
         ]
         res = analyze_permissions(
             declared_permissions=test_perms,
-            package_name="com.hackathon.testapp",
-            app_label="Hackathon Test App",
+            package_name="com.sample.testapp",
+            app_label="Sample Test App",
         )
         breakdown = res.get("permission_breakdown", {})
         self.assertIn("android.permission.INTERNET", breakdown.get("normal", []))
@@ -80,7 +87,7 @@ class TestHackathonRequirements(unittest.TestCase):
         self.assertIn("com.example.CUSTOM_PERMISSION", breakdown.get("custom", []))
 
         # Check MITRE matrix
-        manifest = {"permissions": test_perms, "package_name": "com.hackathon.testapp"}
+        manifest = {"permissions": test_perms, "package_name": "com.sample.testapp"}
         matrix = build_mitre_attack_matrix(
             manifest=manifest,
             permission_analysis=res,
@@ -111,7 +118,7 @@ class TestHackathonRequirements(unittest.TestCase):
     def test_cloud_services_detection(self):
         """Test Firebase RTDB, S3 bucket, GCS, and Azure blob detection."""
         sample_urls = [
-            "https://hackathon-test-db-default-rtdb.firebaseio.com",
+            "https://sample-test-db-default-rtdb.firebaseio.com",
             "https://my-threat-c2-bucket.s3.amazonaws.com/payload.apk",
             "https://storage.googleapis.com/malicious-dropper/loader.dex",
             "https://c2storage.blob.core.windows.net/data/exfil.json",
@@ -119,7 +126,7 @@ class TestHackathonRequirements(unittest.TestCase):
         cloud = detect_cloud_services(sample_urls)
         fb_urls = [e["endpoint"] for e in cloud["firebase_endpoints"]]
         cs_urls = [e["endpoint"] for e in cloud["cloud_storage_buckets"]]
-        self.assertIn("https://hackathon-test-db-default-rtdb.firebaseio.com", fb_urls)
+        self.assertIn("https://sample-test-db-default-rtdb.firebaseio.com", fb_urls)
         self.assertTrue(any("my-threat-c2-bucket.s3.amazonaws.com" in u for u in cs_urls))
         self.assertTrue(any("storage.googleapis.com" in u for u in cs_urls))
         self.assertTrue(any("c2storage.blob.core.windows.net" in u for u in cs_urls))
@@ -181,6 +188,69 @@ class TestHackathonRequirements(unittest.TestCase):
         self.assertIn("adb_installed", env)
         self.assertIn("connected_devices_count", env)
         self.assertIn("ready", env)
+
+    def test_package_name_input_validation(self):
+        """Test strict Android package name validation against injection and malformed strings."""
+        # Valid package names
+        valid_pkgs = [
+            "com.example.app",
+            "org.telegram.messenger",
+            "com.google.android.apps.messaging",
+            "in.gov.cybercrime.reporting",
+            "com.test_app_123.tool_4",
+        ]
+        for pkg in valid_pkgs:
+            self.assertTrue(is_valid_package_name(pkg), f"Should be valid: {pkg}")
+            self.assertEqual(validate_package_name(pkg), pkg)
+
+        # Malicious / command injection / malformed package names
+        invalid_pkgs = [
+            "com.example.app; rm -rf /",
+            "com.example.app && echo pwned",
+            "com.example | cat /etc/passwd",
+            "`reboot`",
+            "com.example.app$(whoami)",
+            "com.example app",
+            "com.example.app\n",
+            "singleword",
+            "-com.flag.injection",
+            "",
+            None,
+            12345,
+            "a" * 300,
+        ]
+        for bad in invalid_pkgs:
+            self.assertFalse(is_valid_package_name(bad), f"Should be invalid: {bad}")
+            with self.assertRaises(ValueError):
+                validate_package_name(bad)
+
+        # Inspect package rejects invalid package format gracefully
+        err_inspect = inspect_package("com.evil; reboot")
+        self.assertEqual(err_inspect.get("status"), "ERROR")
+        self.assertIn("Invalid package name", err_inspect.get("error", ""))
+
+        # Pull package rejects invalid package format gracefully
+        err_pull = pull_application_apk("com.evil; rm -rf /", self.case_dir)
+        self.assertEqual(err_pull.get("status"), "ERROR")
+        self.assertIn("Invalid package name", err_pull.get("error", ""))
+
+    def test_apk_path_validation(self):
+        """Test APK path validation ensures file existence and .apk suffix."""
+        # Non-existent file
+        with self.assertRaises(FileNotFoundError):
+            validate_apk_path(self.base_path / "non_existent.apk")
+
+        # Non-apk file extension
+        text_file = self.base_path / "notes.txt"
+        text_file.write_text("not an apk")
+        with self.assertRaises(ValueError):
+            validate_apk_path(text_file)
+
+        # Valid APK file
+        fake_apk = self.base_path / "sample.apk"
+        fake_apk.write_bytes(b"PK\x03\x04test_apk_content")
+        valid_path = validate_apk_path(fake_apk)
+        self.assertEqual(valid_path, fake_apk.resolve())
 
 
 if __name__ == "__main__":

@@ -153,13 +153,13 @@ def footer(canvas, doc):
     canvas.saveState()
     canvas.setFont("Helvetica", 8)
     canvas.setFillColor(colors.HexColor("#64748B"))
-    canvas.drawString(16*mm, 9*mm, "ASCANNER | Static analysis")
+    canvas.drawString(16*mm, 9*mm, "ANDROMALHUT | Static analysis")
     canvas.drawRightString(194*mm, 9*mm, f"Page {doc.page}")
     canvas.restoreState()
 
 doc = SimpleDocTemplate(str(out), pagesize=A4, leftMargin=16*mm,
     rightMargin=16*mm, topMargin=16*mm, bottomMargin=17*mm,
-    title=f"ASCANNER Report - {package}", author="ASCANNER")
+    title=f"AndroMalHut Report - {package}", author="AndroMalHut")
 doc.build(story, onFirstPage=footer, onLaterPages=footer)
 print("PDF_REPORT=" + str(out))
 print("APK_SHA256=" + h)

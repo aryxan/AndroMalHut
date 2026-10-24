@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ASCANNER_AUTO_PDF_V1
+# ANDROMALHUT_AUTO_PDF_V1
 set +e
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 APK="${1:-}"

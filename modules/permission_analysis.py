@@ -4,7 +4,7 @@ Analyzes Android permissions, assesses threats, detects dangerous combinations,
 and maps permissions to MITRE ATT&CK for Mobile and forensic risk categories.
 """
 
-from typing import Dict, Any, List, Set, Tuple
+from typing import Dict, Any, List, Set, Tuple, Optional
 
 # Mapping of known dangerous and special permissions to risk metadata
 DANGEROUS_PERMISSIONS: Dict[str, Dict[str, str]] = {
@@ -518,7 +518,7 @@ def analyze_permissions(
     else:
         overall_severity = "LOW"
 
-    # Explicit hackathon classification into Normal, Dangerous, and Suspicious
+    # Explicit forensic classification into Normal, Dangerous, and Suspicious
     normal_perms: List[str] = []
     dangerous_perms: List[str] = []
     suspicious_perms: List[str] = []

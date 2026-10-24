@@ -13,9 +13,45 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 
 from modules.case_manager import record_evidence_file, log_case_action
+
+
+PACKAGE_NAME_REGEX = re.compile(r"\A[a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+\Z")
+
+
+def is_valid_package_name(package_name: Any) -> bool:
+    """Validate that package_name conforms strictly to safe Android package name format."""
+    if not isinstance(package_name, str):
+        return False
+    if not package_name or len(package_name) > 255:
+        return False
+    return bool(PACKAGE_NAME_REGEX.match(package_name))
+
+
+def validate_package_name(package_name: str) -> str:
+    """Validate package_name format strictly before executing adb or system commands."""
+    if not is_valid_package_name(package_name):
+        raise ValueError(
+            f"Invalid package name format: {package_name!r}. "
+            "Must be between 1 and 255 chars and contain only alphanumeric and underscore characters separated by dots."
+        )
+    return package_name
+
+
+def validate_apk_path(apk_path: Union[str, Path]) -> Path:
+    """Validate that apk_path exists, is a regular file, and has a .apk extension."""
+    if apk_path is None:
+        raise ValueError("APK path must not be None")
+    p = Path(apk_path).expanduser().resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"Target APK does not exist: {p}")
+    if not p.is_file():
+        raise ValueError(f"Target path is not a regular file: {p}")
+    if p.suffix.lower() != ".apk":
+        raise ValueError(f"Target file must have .apk extension, got '{p.suffix}': {p}")
+    return p
 
 
 def is_adb_installed() -> bool:
@@ -295,6 +331,13 @@ def parse_dumpsys_package(dumpsys_output: str) -> Dict[str, Any]:
 
 def inspect_package(package_name: str, serial: Optional[str] = None) -> Dict[str, Any]:
     """Inspect a single installed package in depth using dumpsys and pm."""
+    if not is_valid_package_name(package_name):
+        return {
+            "status": "ERROR",
+            "error": f"Invalid package name format: {package_name!r}. Must contain only alphanumeric characters and underscores separated by dots.",
+        }
+    package_name = validate_package_name(package_name)
+
     target_serial, err = select_device(serial)
     if err:
         return {"status": "ERROR", "error": err}
@@ -438,6 +481,13 @@ def pull_application_apk(
     operator: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Pull an APK from the connected device into evidence/original_apks/ and compute hashes."""
+    if not is_valid_package_name(package_name):
+        return {
+            "status": "ERROR",
+            "error": f"Invalid package name format: {package_name!r}. Must contain only alphanumeric characters and underscores separated by dots.",
+        }
+    package_name = validate_package_name(package_name)
+
     target_serial, err = select_device(serial)
     if err:
         return {"status": "ERROR", "error": err}

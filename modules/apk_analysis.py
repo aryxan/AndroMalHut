@@ -1255,8 +1255,13 @@ def detect_apk_provenance(
 
 def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Perform comprehensive static forensic analysis of an APK."""
+    apk_path = Path(apk_path).expanduser().resolve()
     if not apk_path.exists():
         raise FileNotFoundError(f"APK file not found: {apk_path}")
+    if not apk_path.is_file():
+        raise ValueError(f"Target path is not a regular file: {apk_path}")
+    if apk_path.suffix.lower() != ".apk":
+        raise ValueError(f"Target file must have .apk extension, got '{apk_path.suffix}': {apk_path}")
 
     # Step 1: Cryptographic hashes and file metrics
     hashes = calculate_hashes(apk_path)
