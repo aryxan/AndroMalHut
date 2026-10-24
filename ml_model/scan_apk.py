@@ -300,6 +300,7 @@ def main():
     parser.add_argument("apk", help="Path to APK file")
     parser.add_argument("--installer", default=None, help="Installer package name from dumpsys")
     parser.add_argument("--source", default=None, help="Download source description")
+    parser.add_argument("--online", action="store_true", default=False, help="Opt-in to online lookups (Google Play, CIRCL, VirusTotal)")
     args = parser.parse_args()
 
     apk_path = Path(args.apk).expanduser().resolve()
@@ -313,6 +314,36 @@ def main():
     perms_set = data["perms_set"]
     intents_set = data["intents_set"]
     code_apis = data["sensitive_code_apis"]
+
+    # Extract signing certificate for cryptographic identity verification
+    cert_verified_clean = False
+    cert_fp = None
+    try:
+        from modules.apk_analysis import extract_apk_signing_info
+        from modules.online_verifier import KNOWN_VENDOR_CERTIFICATES, verify_package_online
+        cert_info = extract_apk_signing_info(apk_path)
+        for cert in cert_info.get("certificates", []):
+            fp = cert.get("fingerprint_sha256")
+            if fp:
+                cert_fp = fp
+                pkg_key = data.get("package", "")
+                known_fps = [kfp.lower().replace(":", "").strip() for kfp in KNOWN_VENDOR_CERTIFICATES.get(pkg_key, [])]
+                if fp.lower().replace(":", "").strip() in known_fps:
+                    cert_verified_clean = True
+                    break
+    except Exception:
+        pass
+
+    # Optional online lookups (strictly opt-in via --online)
+    online_info = None
+    if args.online:
+        try:
+            from modules.online_verifier import verify_package_online
+            online_info = verify_package_online(data.get("package", ""), digest, cert_fingerprint=cert_fp, online=True)
+            if online_info.get("identity_status") == "VERIFIED":
+                cert_verified_clean = True
+        except Exception as e:
+            print(f"[!] Warning: Online lookup failed: {e}", file=sys.stderr)
 
     # Resolve installer and provenance context from args or evidence directory
     pkg_name = data.get("package", "")
@@ -333,14 +364,9 @@ def main():
                     pass
 
     # Authoritative determination of official Google Play Store provenance
-    is_play_store = False
-    if installer == "com.android.vending" or (source and "play store" in source.lower()):
-        is_play_store = True
-    elif source and ("sideload" in source.lower() or "direct" in source.lower()):
-        is_play_store = False
-    else:
-        if 'COM.ANDROID.VENDING.BILLING' in perms_set:
-            is_play_store = True
+    # SECURITY RULE: Package name alone or BILLING permission must NEVER force benign!
+    # Only a cryptographic signing certificate match can prove authorized identity.
+    is_play_store = bool(cert_verified_clean)
 
     # Detect hardware acceleration engine
     gpu_device_label = "CPU Execution Engine"
@@ -381,30 +407,41 @@ def main():
     prob_benign = float(probabilities[0])
 
     # Dynamic verdict determined purely by model probability distribution
+    # Dynamic verdict determined purely by model probability distribution
     if prob_malware >= 0.65:
         verdict = "MALICIOUS"
         classification = "MALWARE"
     elif prob_malware >= 0.50:
         verdict = "SUSPICIOUS"
-        classification = "MALWARE"
+        classification = "SUSPICIOUS"
     else:
         verdict = "BENIGN"
         classification = "BENIGN"
 
-    # Contextual calibration: verified Play Store apps without high-confidence malware signals are benign
-    if is_play_store and prob_malware < 0.65:
+    # Contextual calibration: cryptographically verified applications without high-confidence signals are benign
+    if cert_verified_clean and prob_malware < 0.65:
         verdict = "BENIGN"
         classification = "BENIGN"
 
+    # Explainable behavioral interaction risk patterns
+    behavioral_risk_flags = []
+    if row.get('RISK_OVERLAY_ACCESS'):
+        behavioral_risk_flags.append("Banking Overlay / Accessibility Hijacking pattern detected")
+    if row.get('RISK_COVERT_SPYWARE'):
+        behavioral_risk_flags.append("Covert surveillance pattern detected (microphone/camera + call logs + contacts/SMS)")
+    if row.get('RISK_DEVICE_TAKEOVER'):
+        behavioral_risk_flags.append("Device Admin / Accessibility takeover privileges requested")
+    if row.get('RISK_SMS_BOOT'):
+        behavioral_risk_flags.append("SMS Exfiltration / 2FA Interception with Boot persistence")
+
+    # Forensic override: elevate benign verdict to SUSPICIOUS when critical takeover or surveillance patterns are present
+    if verdict == "BENIGN" and (row.get('RISK_OVERLAY_ACCESS') or row.get('RISK_DEVICE_TAKEOVER') or row.get('RISK_COVERT_SPYWARE')):
+        verdict = "SUSPICIOUS"
+        classification = "SUSPICIOUS"
+
     # Identify active threat indicators (strictly from genuine declared capabilities)
     active_indicators = [k for k, v in row.items() if v == 1]
-    highlighted_threats = []
-    if row.get('RISK_OVERLAY_ACCESS'):
-        highlighted_threats.append("Banking Overlay / Accessibility Hijacking pattern detected")
-    if row.get('RISK_COVERT_SPYWARE'):
-        highlighted_threats.append("Covert surveillance pattern detected (microphone/camera + call logs + contacts/SMS)")
-    if row.get('RISK_DEVICE_TAKEOVER'):
-        highlighted_threats.append("Device Admin / Accessibility takeover privileges requested")
+    highlighted_threats = list(behavioral_risk_flags)
     if 'SYSTEM_ALERT_WINDOW' in perms_set:
         highlighted_threats.append("Draw Overlays (SYSTEM_ALERT_WINDOW) requested")
     if 'BIND_ACCESSIBILITY_SERVICE' in perms_set:
@@ -457,6 +494,7 @@ def main():
             "evidence_quality": evidence_quality,
             "reason": reason,
             "highlighted_threats": highlighted_threats,
+            "behavioral_risk_flags": behavioral_risk_flags,
             "active_feature_count": len(active_indicators),
             "limitations": limitations
         }

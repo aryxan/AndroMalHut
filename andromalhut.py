@@ -1010,9 +1010,10 @@ def run_interactive_menu() -> None:
 
                     act = input(f"\n{C_BOLD}Select action [0-2] (Default: 1):{C_RESET} ").strip()
                     if act in ("", "1"):
-                        print(f"\n[*] Querying Google Play, CIRCL NSRL and threat registries for {pkg}...")
-                        with ForensicSpinner("Verifying application identity and hash reputation online..."):
-                            online_res = verify_package_online(pkg, on_device_hash)
+                        confirm_online = input(f"\n{C_YELLOW}[!] Privacy Notice: Online lookups transmit package name ('{pkg}') and hash to external APIs (Google Play, CIRCL, VirusTotal).\n    Proceed with external network lookup? [y/N]: {C_RESET}").strip().lower()
+                        is_online = (confirm_online == "y")
+                        with ForensicSpinner("Evaluating application identity and reputation..."):
+                            online_res = verify_package_online(pkg, on_device_hash, online=is_online)
                         print(f"\n{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
                         print(f"{C_CYAN}{C_BOLD}|             ONLINE HASH & APP REPUTATION VERIFICATION           |{C_RESET}")
                         print(f"{C_CYAN}{C_BOLD}+-----------------------------------------------------------------+{C_RESET}")
@@ -1398,6 +1399,7 @@ def main() -> None:
     # inspect-app
     p_insp = subparsers.add_parser("inspect-app", help="Inspect a specific installed application package")
     p_insp.add_argument("package", help="Application package name (e.g. com.target.app)")
+    p_insp.add_argument("--online", action="store_true", default=False, help="Opt-in to online lookups (Google Play, CIRCL, VirusTotal)")
 
     # pull-apk
     p_pull = subparsers.add_parser("pull-apk", help="Extract APK file from connected device into case evidence")
@@ -1523,6 +1525,10 @@ def main() -> None:
             print(f"    Version: {meta.get('version_name')} (code {meta.get('version_code')})")
             print(f"    Install Time: {meta.get('first_install_time')}")
             print(f"    Requested Perms ({len(meta.get('requested_permissions', []))}): {', '.join(meta.get('requested_permissions', [])[:5])}...")
+            if getattr(args, "online", False):
+                online_res = verify_package_online(args.package, online=True)
+                print(f"    Identity Trust: {online_res.get('threat_reputation')}")
+                print(f"    Catalog Source: {online_res.get('verified_source')}")
         else:
             print(f"[!] Error: {res.get('error')}", file=sys.stderr)
             sys.exit(1)

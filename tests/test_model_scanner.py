@@ -42,7 +42,8 @@ class TestModelScanner(unittest.TestCase):
         if apk.exists():
             res = subprocess.run([str(PYTHON_VENV), str(SCANNER), str(apk)], capture_output=True, text=True)
             self.assertEqual(res.returncode, 0)
-            self.assertIn("Classification       : MALWARE", res.stdout)
+            self.assertIn("Classification       : SUSPICIOUS", res.stdout)
+            self.assertIn("Verdict              : SUSPICIOUS", res.stdout)
 
     def test_scan_benign_flipkart(self):
         apk = PROJECT_ROOT / "Android-Forensics/CASE-20261019-001/evidence/original_apks/com.flipkart.android.apk"

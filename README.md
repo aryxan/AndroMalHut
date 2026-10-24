@@ -394,6 +394,17 @@ python3 andromalhut.py verify-audit
 
 ---
 
+## Privacy & Data Governance
+
+AndroMalHut adheres to strict digital forensics data sovereignty and confidentiality principles:
+
+- **100% Offline Static Analysis by Default:** All APK extraction, permission scoring, DEX decompilation, string IOC parsing, and machine learning inferences execute completely locally without outbound network calls.
+- **Strictly Opt-In Online Threat Intelligence:** Queries to external services (Google Play Store catalog, CIRCL Hashlookup NSRL database, and VirusTotal v3) are **disabled by default**. They require the explicit `--online` CLI argument or typed operator confirmation.
+- **Pre-Transmission Disclosure:** Before sending any external network packet, AndroMalHut prints an explicit disclosure stating exactly what metadata is sent (application package identifier and/or file SHA-256 hash). Untrusted binary code or full APK payloads are never uploaded to remote servers.
+- **Zero-Trust Identity Verification:** A package name alone is never trusted to verify an application. Repackaged malware frequently clones legitimate package names (e.g. banking or utility names). Only cryptographic signing certificate matches or NIST NSRL/CIRCL hash matches can produce a "VERIFIED" trust status; otherwise, applications are labeled `Identity claimed, NOT verified`.
+
+---
+
 ## Troubleshooting & Common Issues
 
 ### 1. `[!] No connected Android devices detected`
