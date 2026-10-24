@@ -18,7 +18,15 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Set, Tuple
 
 from modules.case_manager import calculate_hashes, log_case_action
-from modules.permission_analysis import analyze_permissions
+from modules.permission_analysis import analyze_permissions, build_mitre_attack_matrix
+
+try:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes as crypto_hashes
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    CRYPTOGRAPHY_AVAILABLE = False
+
 
 
 # ============================================================================
@@ -542,10 +550,17 @@ def check_installed_tool(tool_name: str) -> bool:
 
 
 def extract_apk_signing_info(apk_path: Path) -> Dict[str, Any]:
-    """Inspect signing certificates and signatures in META-INF/."""
-    info = {
+    """Inspect signing certificates and signatures, schemes v1-v4, validity, and fingerprints."""
+    info: Dict[str, Any] = {
         "status": "Unknown",
         "signature_files": [],
+        "schemes": {
+            "v1_scheme": False,
+            "v2_scheme": False,
+            "v3_scheme": False,
+            "v4_scheme": False,
+        },
+        "certificates": [],
         "apksigner_output": None,
         "details": [],
     }
@@ -555,25 +570,67 @@ def extract_apk_signing_info(apk_path: Path) -> Dict[str, Any]:
             meta_files = [n for n in z.namelist() if n.startswith("META-INF/")]
             info["signature_files"] = meta_files
 
-        # If apksigner is installed, get official verification
         if check_installed_tool("apksigner"):
             try:
                 res = subprocess.run(
-                    ["apksigner", "verify", "--verbose", "--print-certs", str(apk_path)],
+                    ["apksigner", "verify", "--verbose", "--print-certs-pem", str(apk_path)],
                     capture_output=True,
                     text=True,
-                    timeout=20,
+                    timeout=25,
                 )
-                info["apksigner_output"] = res.stdout.strip() or res.stderr.strip()
+                raw_out = res.stdout.strip() or res.stderr.strip()
+                info["apksigner_output"] = raw_out
+
                 if "Verifies" in res.stdout:
                     info["status"] = "Verified"
+                elif "WARNING" in res.stdout and "Verifies" in res.stdout:
+                    info["status"] = "Verified (With Warnings)"
                 else:
                     info["status"] = "Failed / Unsigned"
+
+                # Parse signature schemes
+                info["schemes"]["v1_scheme"] = "Verified using v1 scheme (JAR signing): true" in res.stdout
+                info["schemes"]["v2_scheme"] = "Verified using v2 scheme (APK Signature Scheme v2): true" in res.stdout
+                info["schemes"]["v3_scheme"] = "Verified using v3 scheme (APK Signature Scheme v3): true" in res.stdout
+                info["schemes"]["v4_scheme"] = "Verified using v4 scheme (APK Signature Scheme v4): true" in res.stdout
+
+                # Parse PEM certificates using cryptography
+                if CRYPTOGRAPHY_AVAILABLE:
+                    pems: List[str] = []
+                    curr: List[str] = []
+                    for line in res.stdout.splitlines():
+                        if "-----BEGIN CERTIFICATE-----" in line:
+                            curr = [line]
+                        elif "-----END CERTIFICATE-----" in line:
+                            curr.append(line)
+                            pems.append("\n".join(curr))
+                            curr = []
+                        elif curr:
+                            curr.append(line)
+
+                    for idx, pem in enumerate(pems, 1):
+                        try:
+                            cert = x509.load_pem_x509_certificate(pem.encode("utf-8"))
+                            info["certificates"].append({
+                                "signer_index": idx,
+                                "subject_dn": cert.subject.rfc4514_string(),
+                                "issuer_dn": cert.issuer.rfc4514_string(),
+                                "serial_number": hex(cert.serial_number),
+                                "valid_from": cert.not_valid_before_utc.isoformat(),
+                                "valid_to": cert.not_valid_after_utc.isoformat(),
+                                "fingerprint_sha256": cert.fingerprint(crypto_hashes.SHA256()).hex(),
+                                "fingerprint_sha1": cert.fingerprint(crypto_hashes.SHA1()).hex(),
+                                "fingerprint_md5": cert.fingerprint(crypto_hashes.MD5()).hex(),
+                                "signature_algorithm": cert.signature_algorithm_oid._name if hasattr(cert, "signature_algorithm_oid") else "Unknown",
+                            })
+                        except Exception as ce:
+                            info["details"].append(f"PEM cert {idx} parse notice: {ce}")
             except Exception as e:
                 info["details"].append(f"apksigner execution error: {e}")
         else:
             if any(f.endswith((".RSA", ".DSA", ".EC")) for f in info["signature_files"]):
                 info["status"] = "Signed (v1 signature block present in META-INF)"
+                info["schemes"]["v1_scheme"] = True
             else:
                 info["status"] = "Unknown / No v1 signature block"
     except Exception as e:
@@ -632,6 +689,62 @@ def inspect_apk_code_patterns(all_strings: List[str]) -> Dict[str, List[str]]:
             r"lockNow",
             r"wipeData",
         ],
+        "contacts_apis": [
+            r"ContactsContract",
+            r"ContactsContract\.Contacts",
+            r"ContactsContract\.CommonDataKinds\.Phone",
+            r"content://com\.android\.contacts",
+        ],
+        "calls_telephony_apis": [
+            r"CallLog\.Calls",
+            r"getDeviceId",
+            r"getImei",
+            r"getSimSerialNumber",
+            r"getSubscriberId",
+            r"getLine1Number",
+            r"android\.intent\.action\.CALL",
+        ],
+        "camera_apis": [
+            r"android\.hardware\.Camera",
+            r"android\.hardware\.camera2",
+            r"openCamera",
+            r"takePicture",
+        ],
+        "microphone_audio_apis": [
+            r"AudioRecord",
+            r"MediaRecorder",
+            r"setAudioSource",
+            r"AudioSource\.MIC",
+        ],
+        "location_apis": [
+            r"LocationManager",
+            r"FusedLocationProviderClient",
+            r"getLastKnownLocation",
+            r"requestLocationUpdates",
+            r"getLatitude",
+            r"getLongitude",
+        ],
+        "clipboard_apis": [
+            r"ClipboardManager",
+            r"getPrimaryClip",
+            r"setPrimaryClip",
+            r"addPrimaryClipChangedListener",
+        ],
+        "file_storage_apis": [
+            r"getExternalStorageDirectory",
+            r"getExternalFilesDir",
+            r"FileInputStream",
+            r"FileOutputStream",
+            r"openFileInput",
+            r"openFileOutput",
+            r"Environment\.getExternalStorageState",
+        ],
+        "package_management_apis": [
+            r"getInstalledPackages",
+            r"getInstalledApplications",
+            r"PackageInstaller",
+            r"pm install",
+        ],
     }
 
     results: Dict[str, List[str]] = {k: [] for k in patterns}
@@ -645,6 +758,388 @@ def inspect_apk_code_patterns(all_strings: List[str]) -> Dict[str, List[str]]:
                 results[category].append(f"{clean_name} (observed {len(matches)} time(s))")
 
     return results
+
+
+def extract_secrets_and_credentials(strings: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """Identify hardcoded API keys, tokens, credentials, email IDs and embedded secrets."""
+    secret_rules = [
+        ("Google API Key", re.compile(r"\bAIza[0-9A-Za-z-_]{34,36}\b"), "HIGH", "Embedded Google Cloud / Firebase API key"),
+        ("AWS Access Key ID", re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "CRITICAL", "Amazon Web Services IAM User Access Key"),
+        ("JWT / Bearer Token", re.compile(r"\beyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*\b"), "HIGH", "JSON Web Token embedded in application bytecode"),
+        ("Private Key Block", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"), "CRITICAL", "Hardcoded Cryptographic Private Key header"),
+        ("Telegram Bot Token", re.compile(r"\b[0-9]{9,10}:[a-zA-Z0-9_-]{35}\b"), "HIGH", "Telegram Bot API authentication token"),
+        ("Discord Webhook", re.compile(r"https://discord\.com/api/webhooks/[0-9]{18,19}/[a-zA-Z0-9_-]{68}"), "HIGH", "Discord C2 / logging webhook URL"),
+        ("Slack Webhook", re.compile(r"https://hooks\.slack\.com/services/T[a-zA-Z0-9_]{8}/B[a-zA-Z0-9_]{8}/[a-zA-Z0-9_]{24}"), "HIGH", "Slack incoming webhook endpoint"),
+        ("Generic Password / Secret Match", re.compile(r"(?i)(?:api_key|app_secret|client_secret|auth_token|secret_key)\s*[:=]\s*['\"]([a-zA-Z0-9_\-\.]{12,64})['\"]"), "MEDIUM", "Hardcoded API secret assignment"),
+        ("Email Address", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b"), "LOW", "Embedded email identifier"),
+    ]
+
+    findings: Dict[str, List[Dict[str, Any]]] = {
+        "api_keys": [],
+        "cloud_tokens": [],
+        "private_keys": [],
+        "emails": [],
+        "webhooks": [],
+        "other_secrets": [],
+    }
+
+    seen_secrets: Set[str] = set()
+    ignored_emails = {"android@android.com", "example@example.com", "user@domain.com"}
+
+    for s in strings:
+        for name, regex, severity, desc in secret_rules:
+            matches = regex.findall(s)
+            for m in matches:
+                val = m if isinstance(m, str) else m[0]
+                val = val.strip("'\"")
+                if len(val) < 8 or val in seen_secrets:
+                    continue
+
+                if name == "Email Address":
+                    val_lower = val.lower()
+                    if val_lower in ignored_emails or val_lower.endswith((".png", ".xml", "google.com", "android.com", "w3.org")):
+                        continue
+                    seen_secrets.add(val)
+                    findings["emails"].append({
+                        "type": name,
+                        "value": val,
+                        "severity": severity,
+                        "description": desc,
+                    })
+                elif name in ("Google API Key", "AWS Access Key ID"):
+                    seen_secrets.add(val)
+                    findings["api_keys"].append({
+                        "type": name,
+                        "value": val,
+                        "severity": severity,
+                        "description": desc,
+                    })
+                elif name == "JWT / Bearer Token":
+                    seen_secrets.add(val)
+                    findings["cloud_tokens"].append({
+                        "type": name,
+                        "value": val[:40] + "... [truncated]",
+                        "severity": severity,
+                        "description": desc,
+                    })
+                elif name == "Private Key Block":
+                    seen_secrets.add(val)
+                    findings["private_keys"].append({
+                        "type": name,
+                        "value": val,
+                        "severity": severity,
+                        "description": desc,
+                    })
+                elif "Webhook" in name or "Bot Token" in name:
+                    seen_secrets.add(val)
+                    findings["webhooks"].append({
+                        "type": name,
+                        "value": val,
+                        "severity": severity,
+                        "description": desc,
+                    })
+                else:
+                    seen_secrets.add(val)
+                    findings["other_secrets"].append({
+                        "type": name,
+                        "value": val,
+                        "severity": severity,
+                        "description": desc,
+                    })
+
+    findings["secrets_found_count"] = sum(len(v) for v in findings.values())
+    return findings
+
+
+def detect_cloud_services(strings: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """Identify Firebase databases, cloud storage buckets, and backend infrastructure."""
+    patterns = [
+        ("Firebase Realtime Database", re.compile(r"https?://[a-zA-Z0-9_\-]+\.firebaseio\.com[^\s\'\"]*"), "HIGH", "Firebase Realtime NoSQL Database endpoint"),
+        ("Firebase Storage / Appspot", re.compile(r"https?://[a-zA-Z0-9_\-]+\.appspot\.com[^\s\'\"]*"), "MEDIUM", "Firebase Cloud Storage Appspot bucket"),
+        ("Firebase Hosting / API", re.compile(r"https?://[a-zA-Z0-9_\-]+\.firebaseapp\.com[^\s\'\"]*"), "MEDIUM", "Firebase App hosting endpoint"),
+        ("AWS S3 Bucket", re.compile(r"https?://(?:[a-zA-Z0-9_\-\.]+\.)?s3(?:[.-][a-zA-Z0-9_\-]+)?\.amazonaws\.com/[a-zA-Z0-9_\-\.\/]*|s3://[a-zA-Z0-9_\-\.\/]+"), "HIGH", "Amazon S3 Object Storage Bucket"),
+        ("Google Cloud Storage", re.compile(r"https?://storage\.googleapis\.com/[a-zA-Z0-9_\-\.\/]+"), "HIGH", "Google Cloud Storage Bucket (GCS)"),
+        ("Azure Blob Storage", re.compile(r"https?://[a-zA-Z0-9_\-]+\.blob\.core\.windows\.net/[a-zA-Z0-9_\-\.\/]*"), "HIGH", "Microsoft Azure Blob Storage endpoint"),
+        ("Supabase Backend", re.compile(r"https?://[a-zA-Z0-9_\-]+\.supabase\.co[^\s\'\"]*"), "MEDIUM", "Supabase PostgreSQL backend endpoint"),
+    ]
+
+    results: Dict[str, List[Dict[str, Any]]] = {
+        "firebase_endpoints": [],
+        "cloud_storage_buckets": [],
+        "other_cloud_services": [],
+    }
+
+    seen: Set[str] = set()
+    for s in strings:
+        for name, regex, sev, desc in patterns:
+            for match in regex.findall(s):
+                clean_url = match.strip("'\"")
+                if clean_url in seen:
+                    continue
+                seen.add(clean_url)
+                entry = {
+                    "service_name": name,
+                    "endpoint": clean_url,
+                    "severity": sev,
+                    "description": desc,
+                }
+                if "Firebase" in name:
+                    results["firebase_endpoints"].append(entry)
+                elif "S3" in name or "Storage" in name or "Blob" in name:
+                    results["cloud_storage_buckets"].append(entry)
+                else:
+                    results["other_cloud_services"].append(entry)
+
+    return results
+
+
+def detect_packers_and_anti_analysis(
+    apk_path: Path,
+    zip_filenames: List[str],
+    strings: List[str],
+) -> Dict[str, Any]:
+    """Identify commercial/custom packers, obfuscation tools, and anti-analysis checks."""
+    packer_signatures = {
+        "Bangcle / Secneo": [r"libsecexe\.so", r"libSecShell\.so", r"libAPKProtect\.so", r"bangcleClasses\.jar"],
+        "Tencent Legu": [r"libshellx\.so", r"libtxshell\.so", r"00O000ll111l\.dat", r"libtup\.so"],
+        "Qihoo 360 / Jiagu": [r"libjiagu\.so", r"libjiagu_art\.so", r"libjgdtc\.so", r"libprotectClass\.so"],
+        "Ijiami": [r"libexec\.so", r"libexecmain\.so", r"ijiami\.dat", r"ijm_rom\.dat"],
+        "DexGuard / ProGuard": [r"dexguard", r"DexGuard", r"dexguard\.util"],
+        "Baidu Protect": [r"libbaiduprotect\.so", r"baiduprotect1\.jar"],
+        "Alibaba / Mobisec": [r"libmobisec\.so", r"libalisecrypto\.so"],
+    }
+
+    anti_analysis_rules = {
+        "Root Detection (su / test-keys)": [r"/system/bin/su", r"/system/xbin/su", r"\bwhich su\b", r"test-keys", r"Superuser\.apk"],
+        "RootBeer Library Check": [r"com\.scottyab\.rootbeer\.RootBeer", r"isRooted", r"isRootedWithBusyBoxCheck"],
+        "Debugger Evasion": [r"isDebuggerConnected", r"waitForDebugger", r"TracerPid", r"/proc/self/status"],
+        "Emulator / Sandbox Evasion": [r"\bgoldfish\b", r"\branchu\b", r"\bqemu\b", r"\bgenymotion\b", r"generic_x86", r"ro\.hardware\.virtual"],
+        "Hooking / Frida Detection": [r"frida-server", r"frida-agent", r"\bxposed\b", r"\bsubstrate\b", r"FridaHook"],
+    }
+
+    files_joined = "\n".join(zip_filenames)
+    strings_joined = "\n".join(strings)
+
+    detected_packers = []
+    for packer, sigs in packer_signatures.items():
+        for sig in sigs:
+            if re.search(sig, files_joined, re.IGNORECASE) or re.search(sig, strings_joined, re.IGNORECASE):
+                detected_packers.append(packer)
+                break
+
+    detected_anti_analysis = []
+    for technique, sigs in anti_analysis_rules.items():
+        for sig in sigs:
+            if re.search(sig, strings_joined, re.IGNORECASE):
+                detected_anti_analysis.append(technique)
+                break
+
+    return {
+        "is_packed": len(detected_packers) > 0,
+        "detected_packers": detected_packers,
+        "anti_analysis_detected": detected_anti_analysis,
+        "anti_analysis_count": len(detected_anti_analysis),
+        "assessment": (
+            f"Packed application detected ({', '.join(detected_packers)}) with anti-analysis mechanisms."
+            if detected_packers
+            else ("Anti-analysis checks present." if detected_anti_analysis else "Standard non-packed binary.")
+        ),
+    }
+
+
+def analyze_native_libraries(apk_path: Path, embedded_libs: List[str]) -> Dict[str, Any]:
+    """Examine bundled .so native shared libraries, identify ABIs, JNI exports, and suspicious calls."""
+    abis: Set[str] = set()
+    libraries_by_abi: Dict[str, List[str]] = {}
+
+    for lib_path in embedded_libs:
+        parts = lib_path.split("/")
+        if len(parts) >= 3:
+            abi = parts[1]
+            lib_name = parts[-1]
+            abis.add(abi)
+            libraries_by_abi.setdefault(abi, []).append(lib_name)
+
+    suspicious_native_calls = [
+        "ptrace", "dlopen", "dlsym", "mprotect", "system",
+        "popen", "execve", "fork", "socket", "connect", "kill"
+    ]
+
+    exported_jni_functions: List[str] = []
+    observed_native_calls: List[str] = []
+
+    try:
+        with zipfile.ZipFile(apk_path, "r") as z:
+            for lib in embedded_libs[:6]:  # Inspect first few representative libraries
+                lib_data = z.read(lib)
+                raw_strs = extract_raw_printable_strings(lib_data, min_length=4)
+                for s in raw_strs:
+                    if s.startswith("Java_") or s == "JNI_OnLoad":
+                        if s not in exported_jni_functions:
+                            exported_jni_functions.append(s)
+                    for sc in suspicious_native_calls:
+                        if s == sc and sc not in observed_native_calls:
+                            observed_native_calls.append(sc)
+    except Exception:
+        pass
+
+    return {
+        "total_libraries": len(embedded_libs),
+        "supported_abis": sorted(list(abis)),
+        "libraries_by_abi": libraries_by_abi,
+        "exported_jni_symbols": exported_jni_functions[:30],
+        "suspicious_native_imports": observed_native_calls,
+        "has_native_code": len(embedded_libs) > 0,
+    }
+
+
+def analyze_accessibility_and_overlay(manifest: Dict[str, Any], strings: List[str]) -> Dict[str, Any]:
+    """Detail accessibility abuse and overlay credential phishing attack capabilities."""
+    perms = set(manifest.get("permissions", []))
+    string_corpus = "\n".join(strings)
+
+    has_overlay_perm = "android.permission.SYSTEM_ALERT_WINDOW" in perms
+    has_accessibility = "android.permission.BIND_ACCESSIBILITY_SERVICE" in perms or len(manifest.get("accessibility_services", [])) > 0
+
+    overlay_patterns = []
+    if "TYPE_APPLICATION_OVERLAY" in string_corpus:
+        overlay_patterns.append("TYPE_APPLICATION_OVERLAY (Modern Android 8.0+ system overlay window)")
+    if "TYPE_SYSTEM_ALERT" in string_corpus:
+        overlay_patterns.append("TYPE_SYSTEM_ALERT (Legacy full-screen alert overlay window)")
+    if "FLAG_NOT_TOUCHABLE" in string_corpus or "FLAG_NOT_FOCUSABLE" in string_corpus:
+        overlay_patterns.append("Click-through transparent overlay flags (tapjacking)")
+
+    accessibility_capabilities = []
+    if has_accessibility:
+        accessibility_capabilities.extend([
+            "Full screen UI element observation & text scraping",
+            "Automated click injection and gesture synthesis",
+            "Keystroke and password interception (keylogging)",
+            "Self-granting administrative & runtime permissions",
+            "Interception of 2FA SMS tokens and banking prompts",
+        ])
+
+    return {
+        "overlay_permission_granted": has_overlay_perm,
+        "accessibility_service_declared": has_accessibility,
+        "overlay_mechanisms_observed": overlay_patterns,
+        "accessibility_capabilities": accessibility_capabilities,
+        "overlay_threat_level": "CRITICAL" if (has_overlay_perm and has_accessibility) else ("HIGH" if has_overlay_perm else "LOW"),
+        "justification": (
+            "Requests both SYSTEM_ALERT_WINDOW and BIND_ACCESSIBILITY_SERVICE, strongly characteristic of banking trojan overlay attacks."
+            if (has_overlay_perm and has_accessibility)
+            else ("Requests overlay display capability; may draw screens over other apps." if has_overlay_perm else "No active overlay threat detected.")
+        ),
+    }
+
+
+def analyze_device_admin(manifest: Dict[str, Any], strings: List[str]) -> Dict[str, Any]:
+    """Analyze Device Administrator registration and persistence mechanisms."""
+    perms = set(manifest.get("permissions", []))
+    receivers = manifest.get("device_admin_receivers", [])
+    has_admin_perm = "android.permission.BIND_DEVICE_ADMIN" in perms or len(receivers) > 0
+
+    string_corpus = "\n".join(strings)
+    admin_apis = []
+    if "lockNow" in string_corpus:
+        admin_apis.append("lockNow() - Instantly lock device screen")
+    if "wipeData" in string_corpus:
+        admin_apis.append("wipeData() - Factory reset and wipe device storage")
+    if "resetPassword" in string_corpus:
+        admin_apis.append("resetPassword() - Programmatically change device PIN/password")
+
+    return {
+        "device_admin_declared": has_admin_perm,
+        "admin_receivers": receivers,
+        "observed_admin_apis": admin_apis,
+        "persistence_capability": "CRITICAL (Anti-Uninstall & Remote Lockout)" if has_admin_perm else "NONE",
+        "description": (
+            "Declares Device Administrator Receiver. App can prevent uninstallation and execute privileged device lock/wipe commands."
+            if has_admin_perm
+            else "Standard non-administrative application."
+        ),
+    }
+
+
+def analyze_data_exfiltration(
+    manifest: Dict[str, Any],
+    observed_patterns: Dict[str, Any],
+    network_indicators: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Correlate sensitive local data sources with communication sinks to identify exfiltration paths."""
+    perms = set(manifest.get("permissions", []))
+    patterns = observed_patterns or {}
+    urls = network_indicators.get("urls", [])
+    ips = network_indicators.get("ipv4", [])
+
+    has_network = "android.permission.INTERNET" in perms or len(urls) > 0 or len(ips) > 0
+
+    sources = []
+    if any(p in perms for p in ["android.permission.READ_SMS", "android.permission.RECEIVE_SMS"]) or patterns.get("sms_apis"):
+        sources.append("SMS Messages & 2FA Codes")
+    if "android.permission.READ_CONTACTS" in perms or patterns.get("contacts_apis"):
+        sources.append("Address Book Contacts")
+    if "android.permission.READ_CALL_LOG" in perms or patterns.get("calls_telephony_apis"):
+        sources.append("Call Records & Hardware IMEI/IMSI")
+    if any(p in perms for p in ["android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"]) or patterns.get("location_apis"):
+        sources.append("Live GPS / Cell Location Coordinates")
+    if "android.permission.RECORD_AUDIO" in perms or patterns.get("microphone_audio_apis"):
+        sources.append("Microphone Audio Recordings")
+    if "android.permission.CAMERA" in perms or patterns.get("camera_apis"):
+        sources.append("Camera Images & Video")
+    if "android.permission.READ_EXTERNAL_STORAGE" in perms or "android.permission.MANAGE_EXTERNAL_STORAGE" in perms or patterns.get("file_storage_apis"):
+        sources.append("Local Files & Stored Documents")
+    if patterns.get("clipboard_apis"):
+        sources.append("System Clipboard Data")
+
+    channels = []
+    if has_network:
+        channels.append(f"External HTTP/HTTPS POST & Socket Endpoints ({len(urls)} URLs, {len(ips)} Public IPs)")
+    if "android.permission.SEND_SMS" in perms:
+        channels.append("Outbound SMS Transmission (Toll Fraud / Covert Exfil)")
+
+    exfil_potential = "HIGH" if (sources and channels) else ("MEDIUM" if sources else "LOW")
+
+    return {
+        "sensitive_sources_accessed": sources,
+        "exfiltration_channels": channels,
+        "exfiltration_risk_level": exfil_potential,
+        "summary": (
+            f"Potential data exfiltration detected: App accesses {', '.join(sources)} and has outbound transmission capabilities via {', '.join(channels)}."
+            if (sources and channels)
+            else "No high-risk data exfiltration pathway identified."
+        ),
+    }
+
+
+def build_unified_ioc_list(
+    hashes: Dict[str, Any],
+    manifest: Dict[str, Any],
+    network_indicators: Dict[str, Any],
+    cloud_services: Dict[str, Any],
+    suspicious_files: List[str],
+) -> Dict[str, Any]:
+    """Prepare a consolidated Indicator of Compromise (IOC) record."""
+    pkg_name = manifest.get("package_name", "Unknown")
+
+    return {
+        "hashes": {
+            "sha256": hashes.get("sha256", ""),
+            "sha1": hashes.get("sha1", ""),
+            "md5": hashes.get("md5", ""),
+        },
+        "package_names": [pkg_name] if pkg_name != "Unknown" else [],
+        "domains": [d.get("indicator") for d in network_indicators.get("domains", []) if isinstance(d, dict)],
+        "urls": [u.get("indicator") for u in network_indicators.get("urls", []) if isinstance(u, dict)],
+        "ipv4_addresses": [ip.get("indicator") for ip in network_indicators.get("ipv4", []) if isinstance(ip, dict)],
+        "cloud_infrastructure": [
+            f"{c.get('service_name')}: {c.get('endpoint')}"
+            for sub in cloud_services.values()
+            for c in sub if isinstance(c, dict)
+        ],
+        "suspicious_filenames": suspicious_files,
+    }
+
 
 
 def detect_apk_provenance(
@@ -814,7 +1309,17 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
     # Step 5: Android API & Code Pattern Analysis
     observed_patterns = inspect_apk_code_patterns(unique_strings)
 
-    # Step 6: Provenance, Installation Timestamp & Download Origin
+    # Step 6: Secrets, Cloud Services, Packers, Native, Overlay & Exfiltration
+    secrets_detected = extract_secrets_and_credentials(unique_strings)
+    cloud_services = detect_cloud_services(unique_strings)
+    packer_info = detect_packers_and_anti_analysis(apk_path, embedded_dex + embedded_libs + embedded_assets, unique_strings)
+    native_analysis = analyze_native_libraries(apk_path, embedded_libs)
+    accessibility_analysis = analyze_accessibility_and_overlay(manifest, unique_strings)
+    device_admin_analysis = analyze_device_admin(manifest, unique_strings)
+    data_exfiltration = analyze_data_exfiltration(manifest, observed_patterns, extracted_indicators)
+    unified_iocs = build_unified_ioc_list(hashes, manifest, extracted_indicators, cloud_services, embedded_dex + embedded_libs)
+
+    # Step 7: Provenance, Installation Timestamp & Download Origin
     case_context_dir = None
     if output_analysis_dir:
         # Check standard layout: case_dir / analysis / apk_analysis
@@ -823,7 +1328,7 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
             case_context_dir = candidate_case
     provenance = detect_apk_provenance(apk_path, manifest, extracted_indicators, case_dir=case_context_dir)
 
-    # Step 7: Permission Analysis (Context & Provenance Aware)
+    # Step 8: Permission Analysis (Context & Provenance Aware)
     pkg_name = manifest.get("package_name", "Unknown")
     app_label = manifest.get("application_label") or pkg_name
     perm_report = analyze_permissions(
@@ -833,10 +1338,20 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
         app_label=app_label,
     )
 
-    # Step 8: Signing & Certificate Information
+    # Step 9: Signing & Certificate Information (v1-v4 schemes, X.509 validity, fingerprints)
     signing_info = extract_apk_signing_info(apk_path)
 
-    # Step 9: Categorize findings into Facts, Indicators, and Hypotheses
+    # Step 10: MITRE ATT&CK Mobile Matrix Mapping
+    mitre_matrix = build_mitre_attack_matrix(
+        manifest=manifest,
+        permission_analysis=perm_report,
+        observed_patterns=observed_patterns,
+        packer_anti_analysis=packer_info,
+        network_indicators=extracted_indicators,
+        native_analysis=native_analysis,
+    )
+
+    # Step 11: Categorize findings into Facts, Indicators, and Hypotheses
     observed_facts = [
         f"Package Name: {manifest.get('package_name')}",
         f"Application Label: {manifest.get('application_label')}",
@@ -847,9 +1362,10 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
         f"File Size: {hashes['size_bytes']} bytes",
         f"SHA256: {hashes['sha256']}",
         f"DEX Bytecode Files: {', '.join(embedded_dex) if embedded_dex else 'None detected'}",
-        f"Native Libraries: {len(embedded_libs)} libraries bundled across ABIs",
+        f"Native Libraries: {len(embedded_libs)} libraries bundled across ABIs ({', '.join(native_analysis.get('supported_abis', [])) or 'No native libs'})",
         f"Total Declared Permissions: {len(manifest.get('permissions', []))}",
         f"Exported Components: {len(manifest.get('exported_components', []))}",
+        f"Signing Status: {signing_info.get('status')} (Schemes: v1={signing_info.get('schemes', {}).get('v1_scheme')}, v2={signing_info.get('schemes', {}).get('v2_scheme')}, v3={signing_info.get('schemes', {}).get('v3_scheme')})",
     ]
 
     is_play_store = perm_report.get("is_play_store", False)
@@ -861,6 +1377,15 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
         suspicious_indicators.append("Declares BroadcastReceiver listening for BOOT_COMPLETED (auto-start persistence)")
     if manifest.get("device_admin_receivers"):
         suspicious_indicators.append("Declares Device Administrator Receiver (anti-uninstall/remote lock capability)")
+    if packer_info.get("is_packed"):
+        suspicious_indicators.append(f"Commercial/custom APK packer detected: {', '.join(packer_info.get('detected_packers', []))}")
+    if packer_info.get("anti_analysis_detected"):
+        suspicious_indicators.append(f"Anti-analysis evasions detected: {', '.join(packer_info.get('anti_analysis_detected', []))}")
+    if secrets_detected.get("api_keys") or secrets_detected.get("private_keys"):
+        sec_count = len(secrets_detected.get("api_keys", [])) + len(secrets_detected.get("private_keys", []))
+        suspicious_indicators.append(f"Hardcoded API keys / private cryptographic secrets embedded in code ({sec_count} found)")
+    if cloud_services.get("firebase_endpoints"):
+        suspicious_indicators.append(f"Exposes Firebase Realtime Database / backend endpoints ({len(cloud_services['firebase_endpoints'])} found)")
     if observed_patterns.get("dynamic_code_loading"):
         suspicious_indicators.append("References dynamic code loading APIs (DexClassLoader/dalvik.system)")
     if observed_patterns.get("reflection_abuse"):
@@ -936,6 +1461,15 @@ def analyze_apk(apk_path: Path, output_analysis_dir: Optional[Path] = None) -> D
         "permissions_analysis": perm_report,
         "signing_info": signing_info,
         "observed_patterns": observed_patterns,
+        "secrets_detected": secrets_detected,
+        "cloud_services": cloud_services,
+        "packer_and_anti_analysis": packer_info,
+        "native_library_analysis": native_analysis,
+        "accessibility_analysis": accessibility_analysis,
+        "device_admin_analysis": device_admin_analysis,
+        "data_exfiltration_analysis": data_exfiltration,
+        "unified_iocs": unified_iocs,
+        "mitre_attack_matrix": mitre_matrix,
         "network_indicators": extracted_indicators,
         "embedded_files": {
             "dex_files": embedded_dex,

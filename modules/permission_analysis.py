@@ -215,6 +215,64 @@ DANGEROUS_PERMISSIONS: Dict[str, Dict[str, str]] = {
     },
 }
 
+# Standard Android runtime dangerous permissions (Android Developer Reference)
+ANDROID_DANGEROUS_PERMISSIONS = {
+    "android.permission.READ_CALENDAR",
+    "android.permission.WRITE_CALENDAR",
+    "android.permission.CAMERA",
+    "android.permission.READ_CONTACTS",
+    "android.permission.WRITE_CONTACTS",
+    "android.permission.GET_ACCOUNTS",
+    "android.permission.ACCESS_FINE_LOCATION",
+    "android.permission.ACCESS_COARSE_LOCATION",
+    "android.permission.ACCESS_BACKGROUND_LOCATION",
+    "android.permission.RECORD_AUDIO",
+    "android.permission.READ_PHONE_STATE",
+    "android.permission.READ_PHONE_NUMBERS",
+    "android.permission.CALL_PHONE",
+    "android.permission.ANSWER_PHONE_CALLS",
+    "android.permission.READ_CALL_LOG",
+    "android.permission.WRITE_CALL_LOG",
+    "android.permission.ADD_VOICEMAIL",
+    "android.permission.USE_SIP",
+    "android.permission.PROCESS_OUTGOING_CALLS",
+    "android.permission.BODY_SENSORS",
+    "android.permission.BODY_SENSORS_BACKGROUND",
+    "android.permission.SEND_SMS",
+    "android.permission.RECEIVE_SMS",
+    "android.permission.READ_SMS",
+    "android.permission.RECEIVE_WAP_PUSH",
+    "android.permission.RECEIVE_MMS",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.WRITE_EXTERNAL_STORAGE",
+    "android.permission.MANAGE_EXTERNAL_STORAGE",
+    "android.permission.ACCESS_MEDIA_LOCATION",
+    "android.permission.POST_NOTIFICATIONS",
+    "android.permission.NEARBY_WIFI_DEVICES",
+    "android.permission.BLUETOOTH_SCAN",
+    "android.permission.BLUETOOTH_CONNECT",
+    "android.permission.BLUETOOTH_ADVERTISE",
+    "android.permission.UWB_RANGING",
+}
+
+# Special, signature, or high-risk abusable permissions (Overlay, Accessibility, Admin, Install)
+SPECIAL_SUSPICIOUS_PERMISSIONS = {
+    "android.permission.SYSTEM_ALERT_WINDOW",
+    "android.permission.BIND_ACCESSIBILITY_SERVICE",
+    "android.permission.BIND_DEVICE_ADMIN",
+    "android.permission.REQUEST_INSTALL_PACKAGES",
+    "android.permission.INSTALL_PACKAGES",
+    "android.permission.DELETE_PACKAGES",
+    "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
+    "android.permission.PACKAGE_USAGE_STATS",
+    "android.permission.WRITE_SETTINGS",
+    "android.permission.WRITE_SECURE_SETTINGS",
+    "android.permission.INTERNAL_SYSTEM_WINDOW",
+    "android.permission.SYSTEM_OVERLAY_WINDOW",
+    "android.permission.ACCESS_SUPERUSER",
+    "android.permission.BIND_VPN_SERVICE",
+}
+
 # Dangerous combination rules indicating specific attack patterns
 COMBINATION_RULES = [
     {
@@ -460,6 +518,22 @@ def analyze_permissions(
     else:
         overall_severity = "LOW"
 
+    # Explicit hackathon classification into Normal, Dangerous, and Suspicious
+    normal_perms: List[str] = []
+    dangerous_perms: List[str] = []
+    suspicious_perms: List[str] = []
+    custom_perms: List[str] = []
+
+    for perm in sorted(declared_set):
+        if perm in SPECIAL_SUSPICIOUS_PERMISSIONS or perm in ["android.permission.SYSTEM_ALERT_WINDOW", "android.permission.BIND_ACCESSIBILITY_SERVICE", "android.permission.BIND_DEVICE_ADMIN", "android.permission.REQUEST_INSTALL_PACKAGES"]:
+            suspicious_perms.append(perm)
+        elif perm in ANDROID_DANGEROUS_PERMISSIONS or (perm in DANGEROUS_PERMISSIONS and DANGEROUS_PERMISSIONS[perm]["risk"] in ("CRITICAL", "HIGH", "MEDIUM")):
+            dangerous_perms.append(perm)
+        elif perm.startswith("android.permission."):
+            normal_perms.append(perm)
+        else:
+            custom_perms.append(perm)
+
     return {
         "total_declared": len(declared_set),
         "total_granted": len(granted_set) if granted_permissions is not None else "Not Available (Static Analysis)",
@@ -469,6 +543,12 @@ def analyze_permissions(
         "matched_threat_patterns": matched_rules,
         "categorized_permissions": categorized,
         "dangerous_count": len(categorized["critical"]) + len(categorized["high"]) + len(categorized["medium"]),
+        "permission_breakdown": {
+            "normal": normal_perms,
+            "dangerous": dangerous_perms,
+            "suspicious": suspicious_perms,
+            "custom": custom_perms,
+        },
         "is_play_store": is_play_store,
         "provenance_note": (
             "Verified Google Play Store Application (legitimate OTP/SIM binding permissions)"
@@ -476,4 +556,189 @@ def analyze_permissions(
             else "Standard / Untrusted Origin"
         ),
     }
+
+
+def build_mitre_attack_matrix(
+    manifest: Dict[str, Any],
+    permission_analysis: Dict[str, Any],
+    observed_patterns: Dict[str, Any],
+    packer_anti_analysis: Optional[Dict[str, Any]] = None,
+    network_indicators: Optional[Dict[str, Any]] = None,
+    native_analysis: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Map detected static & behavioral indicators to MITRE ATT&CK for Mobile matrix."""
+    matrix: List[Dict[str, Any]] = []
+    perms = set(manifest.get("permissions", []))
+    patterns = observed_patterns or {}
+    packer_info = packer_anti_analysis or {}
+    net = network_indicators or {}
+
+    # 1. Credential Access: T1411 - Input Capture (Overlay & Accessibility)
+    if (
+        "android.permission.SYSTEM_ALERT_WINDOW" in perms
+        or "android.permission.BIND_ACCESSIBILITY_SERVICE" in perms
+        or patterns.get("accessibility_abuse")
+    ):
+        matrix.append({
+            "tactic": "Credential Access",
+            "technique_id": "T1411",
+            "technique_name": "Input Capture: Fake Login Overlay / Keylogging",
+            "confidence": "HIGH",
+            "evidence": "Requests Overlay (SYSTEM_ALERT_WINDOW) or Accessibility Service APIs for screen interception.",
+        })
+
+    # 2. Collection: T1412 - Capture SMS Messages
+    if (
+        any(p in perms for p in ["android.permission.RECEIVE_SMS", "android.permission.READ_SMS", "android.permission.SEND_SMS"])
+        or patterns.get("sms_apis")
+    ):
+        matrix.append({
+            "tactic": "Collection",
+            "technique_id": "T1412",
+            "technique_name": "Capture SMS Messages & 2FA Tokens",
+            "confidence": "HIGH",
+            "evidence": "Requests SMS interception/reading permissions or directly invokes SmsManager / Telephony APIs.",
+        })
+
+    # 3. Collection: T1430 - Location Tracking
+    if (
+        any(p in perms for p in ["android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_BACKGROUND_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"])
+        or patterns.get("location_apis")
+    ):
+        matrix.append({
+            "tactic": "Collection",
+            "technique_id": "T1430",
+            "technique_name": "Location Tracking",
+            "confidence": "HIGH",
+            "evidence": "Requests GPS or cell location tracking permissions / APIs.",
+        })
+
+    # 4. Collection: T1432 - Access Contact List
+    if "android.permission.READ_CONTACTS" in perms or patterns.get("contacts_apis"):
+        matrix.append({
+            "tactic": "Collection",
+            "technique_id": "T1432",
+            "technique_name": "Access Contact List",
+            "confidence": "HIGH",
+            "evidence": "Requests READ_CONTACTS or references ContactsContract content queries.",
+        })
+
+    # 5. Collection: T1433 - Access Call Log
+    if "android.permission.READ_CALL_LOG" in perms or patterns.get("calls_telephony_apis"):
+        matrix.append({
+            "tactic": "Collection",
+            "technique_id": "T1433",
+            "technique_name": "Access Call Log & Telephony Profiling",
+            "confidence": "HIGH",
+            "evidence": "Queries CallLog or retrieves hardware identity (IMEI, SIM serial, IMSI).",
+        })
+
+    # 6. Collection: T1429 - Capture Audio
+    if "android.permission.RECORD_AUDIO" in perms or patterns.get("microphone_audio_apis"):
+        matrix.append({
+            "tactic": "Collection",
+            "technique_id": "T1429",
+            "technique_name": "Audio Capture / Ambient Eavesdropping",
+            "confidence": "HIGH",
+            "evidence": "Requests microphone recording permission or instantiates AudioRecord / MediaRecorder.",
+        })
+
+    # 7. Collection: T1414 - Capture Clipboard
+    if patterns.get("clipboard_apis"):
+        matrix.append({
+            "tactic": "Collection",
+            "technique_id": "T1414",
+            "technique_name": "Capture Clipboard Data",
+            "confidence": "MEDIUM",
+            "evidence": "Monitors or extracts system clipboard entries via ClipboardManager.",
+        })
+
+    # 8. Persistence: T1406 - Device Administrator
+    if (
+        "android.permission.BIND_DEVICE_ADMIN" in perms
+        or manifest.get("device_admin_receivers")
+        or patterns.get("device_administration")
+    ):
+        matrix.append({
+            "tactic": "Persistence",
+            "technique_id": "T1406",
+            "technique_name": "Device Administrator Abuse",
+            "confidence": "HIGH",
+            "evidence": "Registers DeviceAdminReceiver or calls DevicePolicyManager lockNow/wipeData APIs.",
+        })
+
+    # 9. Persistence: T1624 - Event-Triggered Execution
+    if "android.permission.RECEIVE_BOOT_COMPLETED" in perms or manifest.get("boot_receivers"):
+        matrix.append({
+            "tactic": "Persistence",
+            "technique_id": "T1624",
+            "technique_name": "Event-Triggered Execution: Boot Autostart",
+            "confidence": "HIGH",
+            "evidence": "Registers BroadcastReceiver listening for BOOT_COMPLETED to execute on device reboot.",
+        })
+
+    # 10. Execution: T1407 - Dynamic Code Loading
+    if patterns.get("dynamic_code_loading"):
+        matrix.append({
+            "tactic": "Execution",
+            "technique_id": "T1407",
+            "technique_name": "Download New Code at Runtime (Dynamic Loading)",
+            "confidence": "HIGH",
+            "evidence": "Instantiates DexClassLoader, PathClassLoader, or InMemoryDexClassLoader.",
+        })
+
+    # 11. Execution / Delivery: T1475 - Deliver Malicious App (Dropper)
+    if "android.permission.REQUEST_INSTALL_PACKAGES" in perms or "android.permission.INSTALL_PACKAGES" in perms:
+        matrix.append({
+            "tactic": "Initial Access / Delivery",
+            "technique_id": "T1475",
+            "technique_name": "Deliver Malicious App (Dropper / Side-loader)",
+            "confidence": "HIGH",
+            "evidence": "Requests REQUEST_INSTALL_PACKAGES capability to prompt or side-load secondary APKs.",
+        })
+
+    # 12. Defense Evasion: T1628 - Obfuscated / Packed Application
+    if packer_info.get("is_packed") or patterns.get("reflection_abuse"):
+        packers_found = ", ".join(packer_info.get("detected_packers", [])) or "Dynamic Java Reflection"
+        matrix.append({
+            "tactic": "Defense Evasion",
+            "technique_id": "T1628",
+            "technique_name": "Obfuscated / Packed Application",
+            "confidence": "HIGH",
+            "evidence": f"Detected commercial/custom packer signatures ({packers_found}) or extensive reflection.",
+        })
+
+    # 13. Defense Evasion: T1629 - Virtualization / Anti-Analysis Evasion
+    if packer_info.get("anti_analysis_detected"):
+        checks = ", ".join(packer_info.get("anti_analysis_detected", []))
+        matrix.append({
+            "tactic": "Defense Evasion",
+            "technique_id": "T1629",
+            "technique_name": "Virtualization / Sandbox Evasion",
+            "confidence": "HIGH",
+            "evidence": f"Implements runtime environment checks: {checks}",
+        })
+
+    # 14. Privilege Escalation: T1404 - OS Exploitation / Root Access
+    if patterns.get("command_execution"):
+        matrix.append({
+            "tactic": "Privilege Escalation",
+            "technique_id": "T1404",
+            "technique_name": "Exploitation for Privilege Escalation (su / Shell)",
+            "confidence": "MEDIUM",
+            "evidence": "Attempts execution of system shell binaries (/system/bin/sh, su) or Runtime.exec.",
+        })
+
+    # 15. Command and Control: T1437 - Application Layer Protocol C2
+    if net.get("urls") or net.get("ipv4"):
+        matrix.append({
+            "tactic": "Command and Control",
+            "technique_id": "T1437",
+            "technique_name": "Application Layer Protocol: HTTP/HTTPS C2",
+            "confidence": "HIGH",
+            "evidence": f"Hardcoded remote endpoints embedded in bytecode: {len(net.get('urls', []))} URLs, {len(net.get('ipv4', []))} public IPs.",
+        })
+
+    return matrix
+
 

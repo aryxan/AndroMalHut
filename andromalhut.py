@@ -72,6 +72,11 @@ from modules.online_verifier import (
     resolve_friendly_app_name,
     verify_package_online,
 )
+from modules.dynamic_analysis import (
+    run_dynamic_sandbox,
+    capture_device_screenshot,
+    check_dynamic_environment,
+)
 
 import threading
 import time
@@ -712,14 +717,50 @@ def run_interactive_menu() -> None:
             net = res.get("network_indicators", {})
             prov = res.get("provenance", {})
 
+            sign = res.get("signing_info", {})
+            schemes = sign.get("schemes", {})
+            p_bd = pa.get("permission_breakdown", {})
+            secrets = res.get("hardcoded_secrets", {})
+            cloud = res.get("cloud_services", {})
+            over = res.get("accessibility_and_overlay", {})
+            dadmin = res.get("device_admin_analysis", {})
+            exfil = res.get("data_exfiltration_analysis", {})
+            pack = res.get("packers_and_anti_analysis", {})
+            nat = res.get("native_library_analysis", {})
+            mitre = res.get("mitre_attack_matrix", [])
+
             print(f"    Package Identifier   : {m.get('package_name')} ({m.get('application_label') or 'Unknown App'})")
             print(f"    Download Source      : {C_BOLD}{prov.get('download_source', 'Unknown')}{C_RESET}")
             print(f"    Install / Acquisition: {prov.get('first_install_time', 'Unknown')}")
             print(f"    Version Info         : {m.get('version_name')} (code {m.get('version_code')})")
+            print(f"    Signing Verification : {C_GREEN if sign.get('status') == 'VERIFIED' else C_YELLOW}{sign.get('status', 'Unknown')}{C_RESET} (v1:{schemes.get('v1_scheme')} v2:{schemes.get('v2_scheme')} v3:{schemes.get('v3_scheme')} v4:{schemes.get('v4_scheme')})")
+            if sign.get("valid_from"):
+                print(f"    Cert Validity Window : {sign.get('valid_from')} to {sign.get('valid_to')}")
             print(f"    Permission Score     : {pa.get('risk_score', 0)}/100 ({pa.get('overall_severity', 'INFO')})")
+            print(f"    Permissions Breakdown: Normal: {len(p_bd.get('normal', []))}, Dangerous: {C_RED}{len(p_bd.get('dangerous', []))}{C_RESET}, Suspicious: {C_YELLOW}{len(p_bd.get('suspicious', []))}{C_RESET}, Custom: {len(p_bd.get('custom', []))}")
             print(f"    Exported Components  : {len(m.get('exported_components', []))}")
             print(f"    Observed Capabilities: {', '.join(pa.get('capabilities', [])) or 'None'}")
             print(f"    Network IOCs Found   : {len(net.get('urls', []))} URLs, {len(net.get('ipv4', []))} IPs, {len(net.get('domains', []))} domains")
+            if secrets.get("secrets_found_count", 0) > 0:
+                print(f"    Hardcoded Secrets    : {C_RED}{secrets.get('secrets_found_count')}{C_RESET} detected ({len(secrets.get('google_api_keys', []))} Google API keys, {len(secrets.get('aws_access_keys', []))} AWS keys, {len(secrets.get('emails', []))} emails)")
+            if any(cloud.values()):
+                c_names = [k for k, v in cloud.items() if v]
+                print(f"    Cloud Backend Infra  : {', '.join(c_names)}")
+            if over.get("overlay_attack_detected"):
+                print(f"    {C_RED}[!] Threat Vector    : Overlay Attack Mechanism Detected (TYPE_APPLICATION_OVERLAY / SYSTEM_ALERT_WINDOW){C_RESET}")
+            if over.get("accessibility_service_detected"):
+                print(f"    {C_RED}[!] Threat Vector    : Accessibility Service Abuse Risk (UI Scraping / Tapjacking / Keylogging){C_RESET}")
+            if dadmin.get("device_admin_declared"):
+                print(f"    {C_RED}[!] Threat Vector    : Device Administrator Persistence Declared (lockNow/wipeData APIs){C_RESET}")
+            if exfil.get("exfiltration_risk") in ("HIGH", "CRITICAL"):
+                print(f"    {C_RED}[!] Threat Vector    : Sensitive Data Exfiltration Correlation [{exfil.get('exfiltration_risk')}]{C_RESET}")
+            if pack.get("detected_packers"):
+                print(f"    {C_YELLOW}[!] Packer / Obfusc  : {', '.join(pack.get('detected_packers'))}{C_RESET}")
+            if nat.get("native_libraries_count", 0) > 0:
+                print(f"    Native Libraries     : {nat.get('native_libraries_count')} .so libs across {', '.join(nat.get('architectures', []))}")
+                if nat.get("suspicious_native_imports"):
+                    print(f"    Sensitive Syscalls   : {', '.join(nat.get('suspicious_native_imports'))}")
+            print(f"    MITRE ATT&CK Matrix  : {len(mitre)} techniques mapped across Mobile matrix")
             print(f"    Static Analysis Saved: {json_save}")
 
             # Step 3: Local AI Triage (Ollama / Qwen)
@@ -996,9 +1037,10 @@ def run_interactive_menu() -> None:
             print("  [3] Dissect Network PCAP / PCAPNG & Extract C2 Traffic")
             print("  [4] Aggregate Network & C2 Indicators across All Evidence")
             print("  [5] Correlate Chronological Incident Timeline")
+            print("  [6] Run Dynamic Behavior Sandbox & Live Screen Capture (Emulator/Device)")
             print("  [0] Return to Main Menu")
 
-            tele_sub = input(f"\n{C_BOLD}Select forensics operation [0-5]:{C_RESET} ").strip()
+            tele_sub = input(f"\n{C_BOLD}Select forensics operation [0-6]:{C_RESET} ").strip()
             if tele_sub == "1":
                 print("[*] Collecting available device logs via ADB...")
                 with ForensicSpinner("Collecting logcat and system logs..."):
@@ -1096,6 +1138,58 @@ def run_interactive_menu() -> None:
                     print(f"\n{C_BOLD}Recent Timeline Events:{C_RESET}")
                     for ev in events[-10:]:
                         print(f"  [{ev.get('timestamp_utc')[:19]}] {ev.get('event_type'):<20} | {ev.get('description')[:70]}")
+
+            elif tele_sub == "6":
+                print(f"\n{C_BOLD}Dynamic Sandbox Behavior Monitoring & Live Screen Capture:{C_RESET}")
+                env = check_dynamic_environment()
+                if not env["adb_installed"]:
+                    print(f"{C_RED}[!] ADB is not installed. Please install adb: sudo apt install adb{C_RESET}")
+                elif env["connected_devices_count"] == 0:
+                    print(f"{C_YELLOW}[!] No Android emulators or physical test devices connected via ADB.{C_RESET}")
+                    print(f"    Available AVDs: {', '.join(env['available_avds']) if env['available_avds'] else 'None detected'}")
+                    print("    Please start an Android emulator or attach a test device with USB debugging.")
+                else:
+                    # Suggest package from existing apk_analysis if available
+                    cand_pkg = ""
+                    apk_dir = case_dir / "analysis" / "apk_analysis"
+                    if apk_dir.exists():
+                        for f in apk_dir.glob("*.json"):
+                            try:
+                                d = json.loads(f.read_text(encoding="utf-8"))
+                                cand_pkg = d.get("manifest", {}).get("package_name", "")
+                                if cand_pkg:
+                                    break
+                            except Exception:
+                                pass
+
+                    prompt_msg = f"Enter target package to sandbox [{cand_pkg}]: " if cand_pkg else "Enter target package to sandbox (e.g. com.example.app): "
+                    target_pkg = input(prompt_msg).strip() or cand_pkg
+                    if target_pkg:
+                        dur_str = input("Enter monitoring duration in seconds [Default: 15]: ").strip()
+                        dur = int(dur_str) if dur_str.isdigit() and int(dur_str) > 0 else 15
+
+                        apk_to_install = None
+                        inst_ask = input("Do you want to install an APK file first? [y/N]: ").strip().lower()
+                        if inst_ask == "y":
+                            apk_in = input("Enter path to APK to install: ").strip().strip("'\"")
+                            if apk_in and Path(apk_in).exists():
+                                apk_to_install = Path(apk_in)
+
+                        with ForensicSpinner(f"Running dynamic sandbox on {target_pkg} ({dur}s)..."):
+                            d_res = run_dynamic_sandbox(case_dir, target_pkg, apk_path=apk_to_install, duration_seconds=dur)
+
+                        if d_res.get("status") in ("COMPLETED", "SUCCESS"):
+                            print(f"{C_GREEN}[+] Dynamic Sandbox Session Completed successfully!{C_RESET}")
+                            print(f"    Monitored Duration   : {d_res.get('duration_seconds')}s")
+                            print(f"    Observed Processes   : {len(d_res.get('running_processes', []))}")
+                            print(f"    Crashes / Exceptions : {len(d_res.get('crashes_detected', []))}")
+                            print(f"    Active Sockets       : {len(d_res.get('active_sockets_sample', []))}")
+                            print(f"    Screenshots Preserved: {len(d_res.get('screenshots', []))}")
+                            for sc in d_res.get("screenshots", []):
+                                print(f"      • {sc}")
+                            print(f"    Session JSON Report  : {d_res.get('saved_report_path')}")
+                        else:
+                            print(f"{C_RED}[!] Dynamic sandbox error: {d_res.get('error')}{C_RESET}")
 
         elif choice == "5":
             # === [5] Generate Forensic Reports ===
@@ -1289,6 +1383,12 @@ def main() -> None:
     # explain-ollama
     p_ai = subparsers.add_parser("explain-ollama", help="Generate AI-assisted findings narrative using local Ollama")
     p_ai.add_argument("--model", default="llama3", help="Installed Ollama model name to use")
+
+    # sandbox
+    p_sand = subparsers.add_parser("sandbox", help="Run dynamic behavior sandbox on connected Android device/emulator")
+    p_sand.add_argument("package", help="Application package name to run sandbox analysis on")
+    p_sand.add_argument("--apk", default=None, help="Path to APK file to install and launch")
+    p_sand.add_argument("--duration", type=int, default=15, help="Monitoring duration in seconds (default: 15)")
 
     # verify-hashes
     subparsers.add_parser("verify-hashes", help="Cryptographically verify preserved evidence against manifest")
@@ -1488,6 +1588,20 @@ def main() -> None:
             print(f"[+] Ollama briefing saved: {res.get('saved_file')}")
         else:
             print(f"[!] Ollama Error: {res.get('error')}", file=sys.stderr)
+
+    elif cmd == "sandbox":
+        apk_p = Path(args.apk) if args.apk else None
+        res = run_dynamic_sandbox(case_dir, args.package, apk_path=apk_p, duration_seconds=args.duration, serial=args.device_serial)
+        if res.get("status") in ("COMPLETED", "SUCCESS"):
+            print(f"[+] Dynamic Sandbox Complete: {args.package}")
+            print(f"    Monitored Duration: {res.get('duration_seconds')}s")
+            print(f"    Running Processes: {len(res.get('running_processes', []))}")
+            print(f"    Crashes Detected: {len(res.get('crashes_detected', []))}")
+            print(f"    Screenshots Preserved: {len(res.get('screenshots', []))}")
+            print(f"    Report JSON: {res.get('saved_report_path')}")
+        else:
+            print(f"[!] Dynamic Sandbox Error: {res.get('error')}", file=sys.stderr)
+            sys.exit(1)
 
     elif cmd == "verify-hashes":
         results = verify_case_hashes(case_dir)
