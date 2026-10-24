@@ -5,9 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Tested%20OS-Kali%20Linux%20%7C%20Debian%20%7C%20Ubuntu-red.svg)]()
-[![Model Accuracy](https://img.shields.io/badge/Holdout%20Accuracy-93.32%25-brightgreen.svg)]()
-[![ROC-AUC](https://img.shields.io/badge/ROC--AUC-0.9823-blueviolet.svg)]()
-[![Unit Tests](https://img.shields.io/badge/Unit%20Tests-36%20Passed-success.svg)]()
+[![CI](https://github.com/aryxan/AndroMalHut/actions/workflows/ci.yml/badge.svg)](https://github.com/aryxan/AndroMalHut/actions/workflows/ci.yml)
 [![GPU Accelerated](https://img.shields.io/badge/GPU%20Engine-NVIDIA%20CUDA%20XGBoost-76B900?logo=nvidia)]()
 
 > **AndroMalHut** (developed by [**aryxan**](https://github.com/aryxan)) is a terminal-based digital forensics, APK reverse engineering, and mobile malware triage toolkit. Engineered for incident responders, digital forensics investigators, and security researchers, it delivers evidence-grade analysis of suspicious Android applications without executing untrusted binaries.
@@ -435,7 +433,7 @@ python3 andromalhut.py verify-hashes
 
 ## Testing & Verification
 
-Run the full automated test suite (36 unit tests covering dynamic analysis sandbox, permission threat matrices, MITRE ATT&CK correlation, hardcoded secrets detection, v1–v4 certificate auditing, cloud service inspection, GPU ML model inference, and consolidated forensic reporting):
+Run the full automated test suite covering dynamic analysis sandbox, permission threat matrices, MITRE ATT&CK correlation, hardcoded secrets detection, v1–v4 certificate auditing, cloud service inspection, GPU ML model inference, and consolidated forensic reporting:
 
 ```bash
 pytest

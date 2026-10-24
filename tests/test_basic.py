@@ -277,6 +277,14 @@ class TestDroidSleuthCore(unittest.TestCase):
             self.assertTrue(pdf_path.exists())
             self.assertGreater(pdf_path.stat().st_size, 1000)
 
+    def test_dependency_imports_and_typing(self):
+        """Test that permission_analysis imports Optional and all requirements are declared."""
+        import modules.permission_analysis as pa
+        self.assertTrue(hasattr(pa, "Optional"))
+        req_text = (PROJECT_ROOT / "requirements.txt").read_text()
+        self.assertIn("androguard", req_text)
+        self.assertIn("cryptography", req_text)
+
 
 if __name__ == "__main__":
     unittest.main()

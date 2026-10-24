@@ -77,7 +77,7 @@ check_cmd "apksigner" "APK Signature Verifier (apksigner)" "apksigner" "false" "
 echo -e "\n${C_BOLD}--- Network & Packet Dissection Tools ---${C_RESET}"
 check_cmd "tshark" "Wireshark / TShark CLI" "tshark" "false" "Dissects PCAP/PCAPNG network captures to extract C2 traffic"
 
-echo -e "\n${C_BOLD}--- Python Forensic Reporting Libraries ---${C_RESET}"
+echo -e "\n${C_BOLD}--- Python Forensic Reporting & Analysis Libraries ---${C_RESET}"
 if python3 -c "import reportlab" &>/dev/null; then
     echo -e "  [${C_GREEN}INSTALLED${C_RESET}] ${C_BOLD}ReportLab${C_RESET} (Python library)"
     echo -e "              ${C_GRAY}Required for PDF forensic report generation${C_RESET}"
@@ -85,6 +85,26 @@ else
     echo -e "  [${C_YELLOW}OPTIONAL MISSING${C_RESET}] ${C_BOLD}ReportLab${C_RESET} (Python library)"
     echo -e "              ${C_GRAY}Required for PDF forensic report generation${C_RESET}"
     PIP_PACKAGES+=("reportlab")
+    MISSING_OPTIONAL=$((MISSING_OPTIONAL + 1))
+fi
+
+if python3 -c "import androguard" &>/dev/null; then
+    echo -e "  [${C_GREEN}INSTALLED${C_RESET}] ${C_BOLD}androguard${C_RESET} (Python library)"
+    echo -e "              ${C_GRAY}Static APK & DEX reverse engineering engine${C_RESET}"
+else
+    echo -e "  [${C_YELLOW}OPTIONAL MISSING${C_RESET}] ${C_BOLD}androguard${C_RESET} (Python library, pinned: androguard>=4.0.0,<5.0.0)"
+    echo -e "              ${C_GRAY}Static APK & DEX reverse engineering engine${C_RESET}"
+    PIP_PACKAGES+=("androguard>=4.0.0,<5.0.0")
+    MISSING_OPTIONAL=$((MISSING_OPTIONAL + 1))
+fi
+
+if python3 -c "import cryptography" &>/dev/null; then
+    echo -e "  [${C_GREEN}INSTALLED${C_RESET}] ${C_BOLD}cryptography${C_RESET} (Python library)"
+    echo -e "              ${C_GRAY}Cryptographic APK signing verification${C_RESET}"
+else
+    echo -e "  [${C_YELLOW}OPTIONAL MISSING${C_RESET}] ${C_BOLD}cryptography${C_RESET} (Python library, pinned: cryptography>=40.0.0)"
+    echo -e "              ${C_GRAY}Cryptographic APK signing verification${C_RESET}"
+    PIP_PACKAGES+=("cryptography>=40.0.0")
     MISSING_OPTIONAL=$((MISSING_OPTIONAL + 1))
 fi
 
