@@ -134,11 +134,9 @@ When a scan is created or selected, AndroMalHut structures all evidence and anal
 
 ## Machine Learning Model & Evaluation
 
-AndroMalHut integrates a high-performance **GPU-Accelerated XGBoost Classifier** trained on **25,962 real-world Android applications** (13,369 Malware, 12,593 Benign). The model uses 634 features extracted from Android manifest permissions, API call patterns, and multi-permission interaction vectors. To ensure realistic, well-calibrated probability outputs:
+AndroMalHut integrates a calibrated **Gradient Boosted Decision Tree (XGBoost)** classifier evaluated across multi-source benchmark datasets: **AndroZoo** (10,686 raw APKs, 2013–2016) and **Drebin** (15,036 raw APKs).
 
-- **L1 & L2 Regularization** (`reg_alpha = 0.5`, `reg_lambda = 3.0`) prevents tree overconfidence and leaf-node saturation.
-- **Controlled tree depth** (`max_depth = 6`) with learning rate shrinkage (`learning_rate = 0.06`) ensures generalization.
-- Legacy deceptive IPC features from 2011-era datasets were excised and replaced with calibrated multi-permission interaction patterns (covert surveillance, banking overlay hijacking, autostart persistence, and device takeover privileges).
+To eliminate train/test leakage, identical feature rows are deduplicated prior to splitting, reducing 25,722 raw samples to **11,696 unique application capability vectors** (4,797 Malware, 6,899 Benign). The dataset is partitioned into 70% training (8,186), 15% validation (1,755), and 15% holdout test (1,755) subsets. The holdout test set is evaluated only once after final model tuning.
 
 > 📊 **Interactive Evaluation Dashboard:** Explore interactive confusion matrix tooltips, dynamic ROC threshold curves, and zoomable feature gain distributions in the [**Plotly Interactive Model Dashboard (docs/interactive_model_evaluation.html)**](docs/interactive_model_evaluation.html).
 
@@ -160,11 +158,11 @@ AndroMalHut integrates a high-performance **GPU-Accelerated XGBoost Classifier**
   <img src="docs/assets/accuracy_metrics_comparison.png" alt="Accuracy Metrics Comparison" width="48%"/>
 </p>
 
-- **Confusion Matrix Analysis (5,193 Holdout Applications):**
-  - **True Benign (TN):** `2,356` applications correctly identified as benign (**93.53% Specificity**).
-  - **True Malware (TP):** `2,490` applications correctly flagged as malicious (**93.12% Sensitivity / Recall**).
-  - **False Positives (FP):** `163` benign apps flagged (only **3.1%** false alarm rate, safeguarding legitimate banking/UPI apps).
-  - **False Negatives (FN):** `184` evasive samples missed (**3.5%**).
+- **Confusion Matrix Analysis (1,755 Holdout Applications):**
+  - **True Benign (TN):** `967` applications correctly identified as benign (**93.43% Specificity**).
+  - **True Malware (TP):** `672` applications correctly flagged as malicious (**93.33% Sensitivity / Recall**).
+  - **False Positives (FP):** `68` benign apps flagged (**6.57% False Positive Rate = FP / (FP + TN)**).
+  - **False Negatives (FN):** `48` malware samples missed (**6.67% False Negative Rate = FN / (FN + TP)**).
 
 ---
 
@@ -175,33 +173,35 @@ AndroMalHut integrates a high-performance **GPU-Accelerated XGBoost Classifier**
   <img src="docs/assets/top_features_importance.png" alt="Top Feature Importances" width="48%"/>
 </p>
 
-- **Receiver Operating Characteristic (ROC):** Achieves an **AUC of 0.9823**, demonstrating strong discriminative power between malicious code patterns and benign enterprise frameworks.
-- **Top Detection Drivers:** Key features driving classification include telephony access (`READ_PHONE_STATE`), reflection abuse (`GETCANONICALNAME`), runtime string decoding (`URLDECODER`), SMS transmission (`SEND_SMS`), and package verification override (`OVERRIDE_PACKAGE_VERIFICATION`).
+- **Receiver Operating Characteristic (ROC):** Achieves an **AUC of 0.9822**, demonstrating discriminative power between malicious capability combinations and benign application structures.
+- **Top Detection Drivers:** Key features driving classification include telephony state inspection (`READ_PHONE_STATE`), SMS messaging (`SEND_SMS`), camera/audio recording (`CAMERA`, `RECORD_AUDIO`), and high-risk privilege combinations (overlay access, autostart boot persistence).
 
 ---
 
-### Model Benchmark Summary
+### Comprehensive Model Benchmark & Ablation Study
 
-- **Dataset Composition:** Combined AndroZoo (10,686 real-world APKs, 2013–2016) + Drebin-215 (15,036 APKs) + Modern Real-World Dropper & Utility calibration
-- **Total Dataset:** 25,962 Applications (80% Train, 20% Holdout Test)
-- **Feature Space:** 634 Android permissions, API calls, and engineered capability combinations
-- **Execution Acceleration:** NVIDIA CUDA GPU (`hist` tree method) with automatic CPU fallback
-
-| Metric | Score | Details |
-| :--- | :--- | :--- |
-| **Holdout Accuracy** | **93.32%** | 4,846 of 5,193 test applications correctly classified |
-| **Balanced Accuracy** | **93.32%** | Equal performance on benign (93.53%) and malware (93.12%) |
-| **Precision (Malware)** | **93.86%** | High precision, minimizing false alarms on legitimate apps |
-| **Recall (Malware)** | **93.12%** | 2,490 of 2,674 malware samples identified |
-| **F1-Score (Malware)** | **93.49%** | Robust generalization across banking trojans, spyware, and RATs |
-| **ROC-AUC Score** | **0.9823** | Strong discriminator curve |
+| Evaluation Benchmark / Protocol | Accuracy | Balanced Acc | ROC-AUC | False Positive Rate | False Negative Rate |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Random Holdout Split (Primary, n=1,755)** | **93.39%** | **93.38%** | **0.9822** | **6.57%** | **6.67%** |
+| ↳ *Drebin Subset (n=1,107)* | 96.75% | 95.77% | 0.9950 | 2.37% | 6.08% |
+| ↳ *AndroZoo Subset (n=648)* | 87.65% | 83.93% | 0.9218 | 25.13% | 7.00% |
+| **Source-Ablation (111 Shared Permissions Only)** | **88.72%** | **88.22%** | **0.9551** | **8.99%** | **14.58%** |
+| **Cross-Dataset: Drebin -> AndroZoo** | **53.65%** | **66.53%** | **0.8051** | **4.10%** | **62.84%** |
+| **Cross-Dataset: AndroZoo -> Drebin** | **72.87%** | **70.58%** | **0.8232** | **20.62%** | **38.22%** |
 
 ```text
-Confusion Matrix (Actual Rows, Predicted Columns):
+Holdout Confusion Matrix (Actual Rows, Predicted Columns):
                  Predicted Benign   Predicted Malware
-Actual Benign          2,356               163         (93.5% Specificity)
-Actual Malware           184             2,490         (93.1% Sensitivity)
+Actual Benign            967                  68         (93.4% Specificity)
+Actual Malware            48                 672         (93.3% Sensitivity)
 ```
+
+---
+
+### Dataset Limitations & Forensic Scope
+
+> [!NOTE]
+> **Dataset Age and Temporal Generalization:** The training data is derived primarily from 2011–2016 academic corpora (Drebin and AndroZoo). Because Android security models, permission architectures (runtime permissions introduced in Android 6.0), and malware evasion tactics evolve rapidly, random-split benchmark scores overstate real-world accuracy on modern samples. As demonstrated by the cross-dataset evaluation above (accuracy dropping to 53.6%–72.9% across disparate datasets), static permission triage must be corroborated with heuristic behavioral analysis, cryptographic certificate verification, and dynamic sandbox observation.
 
 ---
 

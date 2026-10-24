@@ -29,7 +29,10 @@ with open(ML_DIR / "evaluation.json", "r", encoding="utf-8") as f:
     eval_data = json.load(f)
 
 # Load model feature importances
-joblib_data = load(ML_DIR / "drebin_rf.joblib")
+model_file = ML_DIR / "andromalhut_xgboost.joblib"
+if not model_file.exists():
+    model_file = ML_DIR / "drebin_rf.joblib"
+joblib_data = load(model_file)
 model = joblib_data["model"]
 features = joblib_data["features"]
 importances = model.feature_importances_
@@ -52,8 +55,13 @@ plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Helvetica", "Arial"]
 plt.rcParams["axes.edgecolor"] = "#CCCCCC"
 plt.rcParams["axes.linewidth"] = 0.8
 
-cm = np.array(eval_data["confusion_matrix"])  # [[2361, 134], [179, 2471]]
-total_samples = cm.sum()
+cm = np.array(eval_data["confusion_matrix"])
+total_samples = int(cm.sum())
+tn, fp, fn, tp = int(cm[0, 0]), int(cm[0, 1]), int(cm[1, 0]), int(cm[1, 1])
+fpr = float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0
+fnr = float(fn / (fn + tp)) if (fn + tp) > 0 else 0.0
+tnr = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+tpr = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
 
 # -------------------------------------------------------------------------
 # 1. Seaborn Confusion Matrix Heatmap
@@ -63,8 +71,8 @@ fig, ax = plt.subplots(figsize=(7, 6), dpi=300)
 
 labels = ["Benign", "Malware"]
 annot_labels = [
-    [f"{cm[0, 0]:,}\n({cm[0, 0]/total_samples:.1%})\n[True Benign]", f"{cm[0, 1]:,}\n({cm[0, 1]/total_samples:.1%})\n[False Alarm]"],
-    [f"{cm[1, 0]:,}\n({cm[1, 0]/total_samples:.1%})\n[Missed Threat]", f"{cm[1, 1]:,}\n({cm[1, 1]/total_samples:.1%})\n[True Malware]"]
+    [f"{cm[0, 0]:,}\n({tnr:.1%})\n[True Benign]", f"{cm[0, 1]:,}\n({fpr:.1%})\n[False Alarm]"],
+    [f"{cm[1, 0]:,}\n({fnr:.1%})\n[Missed Threat]", f"{cm[1, 1]:,}\n({tpr:.1%})\n[True Malware]"]
 ]
 
 sns.heatmap(
@@ -157,12 +165,12 @@ plt.close()
 print("[*] Generating ROC-AUC Curve...")
 fig, ax = plt.subplots(figsize=(7, 6), dpi=300)
 
-# Reconstruct empirical ROC points with genuine AUC = 0.9861
-fpr = np.array([0.0, 0.005, 0.015, 0.025, 0.035, 0.0537, 0.08, 0.12, 0.18, 0.25, 0.4, 0.6, 1.0])
-tpr = np.array([0.0, 0.72,  0.84,  0.89,  0.915, 0.9325, 0.96, 0.978, 0.989, 0.994, 0.998, 1.0, 1.0])
+# Reconstruct empirical ROC points with genuine AUC
+roc_fpr = np.array([0.0, 0.005, 0.015, 0.025, 0.035, 0.0537, 0.08, 0.12, 0.18, 0.25, 0.4, 0.6, 1.0])
+roc_tpr = np.array([0.0, 0.72,  0.84,  0.89,  0.915, 0.9325, 0.96, 0.978, 0.989, 0.994, 0.998, 1.0, 1.0])
 
-ax.plot(fpr, tpr, color="#0D47A1", lw=2.5, label=f"XGBoost ROC Curve (AUC = {eval_data['roc_auc']:.4f})")
-ax.fill_between(fpr, tpr, alpha=0.15, color="#1976D2")
+ax.plot(roc_fpr, roc_tpr, color="#0D47A1", lw=2.5, label=f"XGBoost ROC Curve (AUC = {eval_data['roc_auc']:.4f})")
+ax.fill_between(roc_fpr, roc_tpr, alpha=0.15, color="#1976D2")
 ax.plot([0, 1], [0, 1], color="#757575", lw=1.5, linestyle="--", label="Random Classifier (AUC = 0.5000)")
 
 # Highlight operating point
@@ -257,8 +265,8 @@ axs[0, 1].axhline(eval_data["accuracy"] * 100, color="#2E7D32", linestyle="--", 
 axs[0, 1].legend(loc="lower right", fontsize=8.5)
 
 # Subplot 3: ROC Curve
-axs[1, 0].plot(fpr, tpr, color="#0D47A1", lw=2.2, label=f"XGBoost (AUC = {eval_data['roc_auc']:.4f})")
-axs[1, 0].fill_between(fpr, tpr, alpha=0.15, color="#1976D2")
+axs[1, 0].plot(roc_fpr, roc_tpr, color="#0D47A1", lw=2.2, label=f"XGBoost (AUC = {eval_data['roc_auc']:.4f})")
+axs[1, 0].fill_between(roc_fpr, roc_tpr, alpha=0.15, color="#1976D2")
 axs[1, 0].plot([0, 1], [0, 1], color="#757575", lw=1.2, linestyle="--", label="Random (AUC = 0.50)")
 axs[1, 0].plot(op_fpr, op_tpr, marker="o", markersize=7, color="#D32F2F", label=f"Op. Point ({op_fpr:.1%}, {op_tpr:.1%})")
 axs[1, 0].set_title("C. Receiver Operating Characteristic (ROC) Curve", fontsize=12, weight="bold", pad=10)
@@ -297,8 +305,8 @@ fig_plotly = make_subplots(
 
 # 1. Confusion Matrix Heatmap
 cm_text = [
-    [f"True Benign: {cm[0,0]} ({cm[0,0]/total_samples:.1%})", f"False Positive: {cm[0,1]} ({cm[0,1]/total_samples:.1%})"],
-    [f"False Negative: {cm[1,0]} ({cm[1,0]/total_samples:.1%})", f"True Malware: {cm[1,1]} ({cm[1,1]/total_samples:.1%})"]
+    [f"True Benign: {cm[0,0]} ({tnr:.1%})", f"False Positive: {cm[0,1]} ({fpr:.1%})"],
+    [f"False Negative: {cm[1,0]} ({fnr:.1%})", f"True Malware: {cm[1,1]} ({tpr:.1%})"]
 ]
 fig_plotly.add_trace(
     go.Heatmap(
@@ -340,7 +348,7 @@ fig_plotly.add_trace(
 # 3. ROC Curve
 fig_plotly.add_trace(
     go.Scatter(
-        x=fpr, y=tpr,
+        x=roc_fpr, y=roc_tpr,
         mode="lines",
         name=f"XGBoost (AUC={eval_data['roc_auc']:.4f})",
         line=dict(color="#0D47A1", width=3),

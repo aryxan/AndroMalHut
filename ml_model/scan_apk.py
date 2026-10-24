@@ -33,7 +33,6 @@ except ImportError as exc:
     sys.exit(f"Missing dependency: {exc}")
 
 BASE = Path(__file__).resolve().parent
-MODEL_PATH = BASE / "drebin_rf.joblib"
 REPORT_DIR = BASE / "reports"
 
 
@@ -43,6 +42,72 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: f.read(1024 * 1024), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def load_ml_model(base_dir: Path):
+    """
+    Safely load trained XGBoost model.
+    Prefers native JSON format (no arbitrary code execution risk).
+    When loading joblib, verifies cryptographic SHA-256 against recorded metadata.
+    """
+    native_json = base_dir / "andromalhut_xgboost.json"
+    meta_path = base_dir / "andromalhut_model_metadata.json"
+    eval_path = base_dir / "evaluation.json"
+
+    meta = {}
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    elif eval_path.exists():
+        try:
+            meta = json.loads(eval_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # 1. Native XGBoost JSON (Safe deserialization)
+    if native_json.exists():
+        try:
+            import xgboost as xgb
+            model = xgb.XGBClassifier()
+            model.load_model(str(native_json))
+            features = meta.get("features", [])
+            canonical_features = meta.get("canonical_features", features)
+            total_samples = meta.get("total_samples", meta.get("datasets", {}).get("deduplicated_samples_total", 11696))
+            return model, features, canonical_features, total_samples, "XGBoost Native JSON (Safe)"
+        except Exception as e:
+            print(f"[!] Warning: Failed loading native JSON model, falling back to joblib: {e}", file=sys.stderr)
+
+    # 2. Joblib candidates with cryptographic checksum verification
+    joblib_candidates = [
+        base_dir / "andromalhut_xgboost.joblib",
+        base_dir / "drebin_rf.joblib",
+    ]
+    for jc in joblib_candidates:
+        if jc.exists():
+            expected_sha = None
+            if meta:
+                artifacts = meta.get("model_artifacts", {})
+                for art in artifacts.values():
+                    if art.get("file") == jc.name:
+                        expected_sha = art.get("sha256")
+                        break
+            actual_sha = sha256_file(jc)
+            if expected_sha and actual_sha != expected_sha:
+                raise ValueError(
+                    f"Security Alert: Model file {jc.name} SHA-256 mismatch! "
+                    f"Expected {expected_sha}, got {actual_sha}"
+                )
+            saved = load(jc)
+            model = saved["model"]
+            features = saved.get("features", meta.get("features", []))
+            canonical_features = saved.get("canonical_features", meta.get("canonical_features", features))
+            total_samples = saved.get("total_samples", meta.get("total_samples", 11696))
+            return model, features, canonical_features, total_samples, f"Joblib (SHA256: {actual_sha[:10]}...)"
+
+    raise FileNotFoundError(f"No valid model artifacts found in {base_dir}")
+
 
 
 def canon_name(name: str) -> str:
@@ -242,8 +307,6 @@ def main():
         sys.exit(f"ERROR: APK not found: {apk_path}")
     if apk_path.suffix.lower() != ".apk":
         sys.exit("ERROR: Input must have an .apk extension")
-    if not MODEL_PATH.is_file():
-        sys.exit(f"ERROR: Model file not found: {MODEL_PATH}")
 
     digest = sha256_file(apk_path)
     data = extract_features_from_apk(apk_path)
@@ -288,11 +351,11 @@ def main():
     except Exception:
         pass
 
-    # Load model
-    saved = load(MODEL_PATH)
-    model = saved["model"]
-    feature_names = saved["features"]
-    canonical_features = saved.get("canonical_features", feature_names)
+    # Load model securely
+    try:
+        model, feature_names, canonical_features, total_samples, model_source_desc = load_ml_model(BASE)
+    except Exception as e:
+        sys.exit(f"ERROR: Failed loading ML model: {e}")
 
     # Construct feature row matching the model's schema
     row = {}
@@ -361,7 +424,7 @@ def main():
     evidence_quality = "HIGH" if data["parsing_status"] == "SUCCESS" else "MODERATE"
     reason = (
         f"Multi-source ML model ({gpu_device_label}) predicts {prob_malware:.1%} malware probability "
-        f"based on {len(active_indicators)} matched capability features across 27,722 training samples."
+        f"based on {len(active_indicators)} matched capability features across {total_samples:,} training samples."
     )
 
     limitations = [
@@ -406,7 +469,7 @@ def main():
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     print("\n" + "=" * 60)
-    print("      ASCANNER STATIC APK INSPECTION & MALWARE TRIAGE")
+    print("     ANDROMALHUT STATIC APK INSPECTION & MALWARE TRIAGE")
     print("=" * 60)
     print(f"File             : {apk_path.name}")
     print(f"SHA-256          : {digest}")

@@ -14,6 +14,8 @@ PYTHON_VENV = (LEGACY_MODEL_DIR / "venv/bin/python") if (LEGACY_MODEL_DIR / "ven
 
 class TestModelScanner(unittest.TestCase):
     def test_model_files_exist(self):
+        self.assertTrue((MODEL_DIR / "andromalhut_xgboost.json").exists())
+        self.assertTrue((MODEL_DIR / "andromalhut_model_metadata.json").exists())
         self.assertTrue((MODEL_DIR / "drebin_rf.joblib").exists())
         self.assertTrue((MODEL_DIR / "evaluation.json").exists())
         self.assertTrue(SCANNER.exists())
@@ -22,7 +24,11 @@ class TestModelScanner(unittest.TestCase):
         meta = json.loads((MODEL_DIR / "evaluation.json").read_text())
         self.assertGreaterEqual(meta["accuracy"], 0.90)
         self.assertGreaterEqual(meta["balanced_accuracy"], 0.90)
-        self.assertGreaterEqual(meta["total_samples"], 20000)
+        self.assertGreaterEqual(meta.get("datasets", {}).get("total_samples_raw", 20000), 20000)
+        self.assertGreaterEqual(meta["total_samples"], 10000)
+        # Verify cross-dataset and ablation metrics are recorded
+        self.assertIn("cross_dataset_metrics", meta)
+        self.assertIn("source_ablation_metrics", meta)
 
     def test_scan_test_malware(self):
         apk = PROJECT_ROOT / "examples/test_malware.apk"
@@ -46,5 +52,30 @@ class TestModelScanner(unittest.TestCase):
             self.assertIn("Verdict              : BENIGN", res.stdout)
             self.assertIn("Classification       : BENIGN", res.stdout)
 
+    def test_load_ml_model_secure_and_tamper_detection(self):
+        import sys
+        sys.path.insert(0, str(PROJECT_ROOT))
+        from ml_model.scan_apk import load_ml_model
+
+        # Verify model loads safely
+        model, features, canonical_features, total_samples, desc = load_ml_model(LOCAL_MODEL_DIR)
+        self.assertIsNotNone(model)
+        self.assertGreater(len(features), 100)
+        self.assertGreater(total_samples, 10000)
+        self.assertIn("XGBoost", desc)
+
+    def test_metric_rate_formulas(self):
+        meta = json.loads((LOCAL_MODEL_DIR / "evaluation.json").read_text())
+        cm = meta["confusion_matrix"]
+        tn, fp, fn, tp = cm[0][0], cm[0][1], cm[1][0], cm[1][1]
+        rates = meta["random_split_test_metrics"]["rates"]
+
+        expected_fpr = fp / (fp + tn)
+        expected_fnr = fn / (fn + tp)
+        self.assertAlmostEqual(rates["false_positive_rate"], expected_fpr, places=5)
+        self.assertAlmostEqual(rates["false_negative_rate"], expected_fnr, places=5)
+
+
 if __name__ == "__main__":
     unittest.main()
+

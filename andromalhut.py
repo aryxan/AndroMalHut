@@ -207,10 +207,22 @@ def print_banner() -> None:
     # ML Classifier status
     repo_model_dir = Path(__file__).resolve().parent / "ml_model"
     legacy_model_dir = Path.home() / "Android-Forensics/Datasets/Drebin/model"
-    model_dir = repo_model_dir if (repo_model_dir / "drebin_rf.joblib").exists() else legacy_model_dir
-    model_path = model_dir / "drebin_rf.joblib"
-    if model_path.exists():
-        ml_status = f"{C_GREEN}ONLINE{C_RESET} {C_GRAY}(GPU XGBoost • 25,722 samples){C_RESET}"
+    has_model = (
+        (repo_model_dir / "andromalhut_xgboost.json").exists()
+        or (repo_model_dir / "andromalhut_xgboost.joblib").exists()
+        or (repo_model_dir / "drebin_rf.joblib").exists()
+        or (legacy_model_dir / "drebin_rf.joblib").exists()
+    )
+    if has_model:
+        meta_f = repo_model_dir / "andromalhut_model_metadata.json"
+        total_s = 11696
+        if meta_f.exists():
+            try:
+                m = json.loads(meta_f.read_text(encoding="utf-8"))
+                total_s = m.get("total_samples", total_s)
+            except Exception:
+                pass
+        ml_status = f"{C_GREEN}ONLINE{C_RESET} {C_GRAY}(XGBoost • {total_s:,} unique samples){C_RESET}"
     else:
         ml_status = f"{C_YELLOW}STANDBY{C_RESET} {C_GRAY}(Fallback Heuristics){C_RESET}"
 
@@ -292,8 +304,17 @@ def check_tool_dependencies() -> Dict[str, Dict[str, Any]]:
     """Inspect all system binaries, Python libraries, and forensic models."""
     repo_model_dir = Path(__file__).resolve().parent / "ml_model"
     legacy_model_dir = Path.home() / "Android-Forensics/Datasets/Drebin/model"
-    model_dir = repo_model_dir if (repo_model_dir / "drebin_rf.joblib").exists() else legacy_model_dir
-    ml_model_file = model_dir / "drebin_rf.joblib"
+    primary_json = repo_model_dir / "andromalhut_xgboost.json"
+    primary_joblib = repo_model_dir / "andromalhut_xgboost.joblib"
+    legacy_joblib = repo_model_dir / "drebin_rf.joblib"
+    fallback_joblib = legacy_model_dir / "drebin_rf.joblib"
+
+    ml_model_file = None
+    for cand in [primary_json, primary_joblib, legacy_joblib, fallback_joblib]:
+        if cand.exists():
+            ml_model_file = cand
+            break
+
     deps = {
         "python3": {
             "required": True,
@@ -303,9 +324,9 @@ def check_tool_dependencies() -> Dict[str, Dict[str, Any]]:
         },
         "ML Classifier": {
             "required": False,
-            "installed": ml_model_file.exists(),
-            "path": str(ml_model_file) if ml_model_file.exists() else "Not Found",
-            "purpose": "GPU-accelerated XGBoost model (25,722 samples)",
+            "installed": ml_model_file is not None,
+            "path": str(ml_model_file) if ml_model_file else "Not Found",
+            "purpose": "Calibrated XGBoost model (multi-source benchmarks)",
             "install_cmd": "Pre-trained in ml_model/ or trained via ml_model/train.py",
         },
         "adb": {
